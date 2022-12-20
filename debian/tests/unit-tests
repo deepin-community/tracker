@@ -1,0 +1,19 @@
+#!/bin/bash
+
+mkdir "${AUTOPKGTEST_TMP}/locale"
+localedef -c -i en_US -f UTF-8 "${AUTOPKGTEST_TMP}/locale/en_US.utf8"
+
+dh_auto_configure -- \
+    -Dunicode_support=icu \
+    -Dstemmer=enabled \
+    -Ddocs=true \
+    -Dbash_completion=true \
+    -Dbash_completion_dir=/usr/share/bash-completion/completions \
+    -Dsystemd_user_services=true \
+    -Dsystemd_user_services_dir=/usr/lib/systemd/user
+
+LOCPATH=${AUTOPKGTEST_TMP}/locale \
+    HOME=${AUTOPKGTEST_TMP} \
+    LANG=en_US.utf8 \
+    LC_ALL=en_US.utf8 \
+    dbus-run-session -- dh_auto_test 2> >(grep -vE '^(Activating|Successfully activated)')>&2

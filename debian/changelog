@@ -1,0 +1,5 @@
+tracker (3.1.2-deepin) stable; urgency=medium
+
+  * ['Rebuild  against by  current gcc 11.2']
+
+ -- Deepin Packages Builder <packages@deepin.org>  Thu, 18 Aug 2022 13:54:41 +0800
