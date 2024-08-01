@@ -1,3 +1,0 @@
-CONSTRAINT GRAPH <A>
-CONSTRAINT GRAPH <B>
-SELECT ?u { ?u a example:A }

@@ -35,7 +35,7 @@ struct _TrackerSerializerJson
 	JsonGenerator *generator;
 	GString *data;
 	GPtrArray *vars;
-	gssize current_pos;
+	gsize current_pos;
 	guint stream_closed : 1;
 	guint cursor_started : 1;
 	guint cursor_finished : 1;
@@ -137,15 +137,7 @@ serialize_up_to_position (TrackerSerializerJson  *serializer_json,
 		json_builder_begin_object (builder);
 
 		for (i = 0; i < tracker_sparql_cursor_get_n_columns (cursor); i++) {
-			const gchar *var, *str, *type = NULL, *datatype = NULL;
-
-			if (tracker_sparql_cursor_get_value_type (cursor, i) == TRACKER_SPARQL_VALUE_TYPE_UNBOUND)
-				continue;
-
-			var = g_ptr_array_index (serializer_json->vars, i);
-			json_builder_set_member_name (builder, var);
-
-			json_builder_begin_object (builder);
+			const gchar *var, *str, *type = NULL, *datatype = NULL, *langtag = NULL;
 
 			switch (tracker_sparql_cursor_get_value_type (cursor, i)) {
 			case TRACKER_SPARQL_VALUE_TYPE_URI:
@@ -171,20 +163,30 @@ serialize_up_to_position (TrackerSerializerJson  *serializer_json,
 			case TRACKER_SPARQL_VALUE_TYPE_BLANK_NODE:
 				type = "bnode";
 				break;
-			default:
-				g_warn_if_reached ();
-				break;
+			case TRACKER_SPARQL_VALUE_TYPE_UNBOUND:
+                                continue;
 			}
+
+			var = g_ptr_array_index (serializer_json->vars, i);
+			json_builder_set_member_name (builder, var);
+
+			json_builder_begin_object (builder);
 
 			json_builder_set_member_name (builder, "type");
 			json_builder_add_string_value (builder, type);
+
+			str = tracker_sparql_cursor_get_langstring (cursor, i, &langtag, NULL);
+
+			if (langtag) {
+				datatype = TRACKER_PREFIX_RDF "langString";
+				json_builder_set_member_name (builder, "xml:lang");
+				json_builder_add_string_value (builder, langtag);
+			}
 
 			if (datatype) {
 				json_builder_set_member_name (builder, "datatype");
 				json_builder_add_string_value (builder, datatype);
 			}
-
-			str = tracker_sparql_cursor_get_string (cursor, i, NULL);
 
 			if (str) {
 				json_builder_set_member_name (builder, "value");

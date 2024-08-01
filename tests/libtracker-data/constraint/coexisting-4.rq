@@ -1,3 +1,0 @@
-CONSTRAINT GRAPH <A>,<B>
-SELECT ?u { ?u a example:A }
-ORDER BY ?u

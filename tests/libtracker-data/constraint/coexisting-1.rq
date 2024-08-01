@@ -1,3 +1,0 @@
-CONSTRAINT GRAPH ALL,<A>
-SELECT ?u { ?u a example:A }
-ORDER BY ?u

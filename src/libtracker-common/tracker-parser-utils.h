@@ -24,10 +24,6 @@
 
 #include <glib.h>
 
-#ifdef HAVE_LIBICU
-#include <unicode/utypes.h>
-#endif
-
 G_BEGIN_DECLS
 
 /* ASCII-7 is in range [0x00,0x7F] */
@@ -59,11 +55,6 @@ G_BEGIN_DECLS
  *   - 0x002E: DOT ('.')
  */
 #define IS_FORCED_WORDBREAK_UCS4(c) ((c) == 0x002E)
-
-
-gboolean tracker_parser_is_reserved_word_utf8 (const gchar *word,
-                                               gsize word_length);
-
 
 /* Define to 1 if you want to enable debugging logs showing HEX contents
  * of the words being parsed */

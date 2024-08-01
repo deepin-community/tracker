@@ -38,7 +38,7 @@ static gboolean use_hidden;
 static gboolean use_batch;
 
 /* copy_rate*1024*COPY_TIMEOUT_MS/1000 */
-static gint timeout_copy_rate;
+static gsize timeout_copy_rate;
 
 static gchar *buffer;
 static gsize  buffer_size;
@@ -103,8 +103,7 @@ query_urns_by_url (const gchar *uri)
 	                                          &error);
 	if (error) {
 		/* Some error happened performing the query, not good */
-		g_error ("Couldn't query the Tracker Store: '%s'",
-		         error ? error->message : "unknown error");
+		g_error ("Couldn't query the Tracker Store: '%s'", error->message);
 	}
 
 	/* Check results... */
@@ -155,8 +154,7 @@ update_store (const gchar *sparql)
 	if (error) {
 		/* Some error happened performing the query, not good */
 		g_error ("Couldn't update store for '%s': %s",
-		         sparql,
-		         error ? error->message : "unknown error");
+		         sparql, error->message);
 	}
 }
 
@@ -226,7 +224,12 @@ context_init (gint    argc,
 	/* Setup context */
 	context = g_option_context_new ("- Simulate MTP daemon");
 	g_option_context_add_main_entries (context, entries, NULL);
-	g_option_context_parse (context, &argc, &argv, NULL);
+	if (!g_option_context_parse (context, &argc, &argv, &error)) {
+		g_printerr ("%s\n", error->message);
+		g_option_context_free (context);
+		return FALSE;
+	}
+
 	g_option_context_free (context);
 
 	/* Check input arguments */
@@ -280,8 +283,7 @@ context_init (gint    argc,
 	                          &buffer_size,
 	                          &error)) {
 		g_error ("Couldn't load file '%s' contents: %s",
-		         file_uri,
-		         error ? error->message : "unknown error");
+		         file_uri, error->message);
 	}
 
 	/* Get connection */
@@ -289,8 +291,7 @@ context_init (gint    argc,
 	                                                NULL, NULL, &error);
 	if (!connection) {
 		/* Some error happened performing the query, not good */
-		g_error ("Couldn't get sparql connection: %s",
-		         error ? error->message : "unknown error");
+		g_error ("Couldn't get sparql connection: %s", error->message);
 	}
 
 	g_print ("\
@@ -298,7 +299,7 @@ Simulating MTP daemon with:\n\
   * File:    %s (%" G_GSIZE_FORMAT " bytes)\n\
   * Destdir: %s\n\
   * Copies:  %d\n\
-  * Rate:    %d KBytes/s (%d bytes every %d ms)\n\
+  * Rate:    %d KBytes/s (%" G_GSIZE_FORMAT "bytes every %d ms)\n\
   * Mode:    %s\n",
 	         file_uri,
 	         buffer_size,
@@ -397,8 +398,7 @@ task_run_cb (gpointer data)
 			                  NULL,
 			                  NULL,
 			                  &error)) {
-				g_error ("Couldn't copy file to the final destination: %s",
-				         error ? error->message : "unknown error");
+				g_error ("Couldn't copy file to the final destination: %s", error->message);
 			}
 		}
 
@@ -426,8 +426,7 @@ task_run_cb (gpointer data)
 				                  NULL,
 				                  NULL,
 				                  &error)) {
-					g_error ("Couldn't copy file to the final destination (batch): %s",
-					         error ? error->message : "unknown error");
+					g_error ("Couldn't copy file to the final destination (batch): %s", error->message);
 				}
 			}
 		}

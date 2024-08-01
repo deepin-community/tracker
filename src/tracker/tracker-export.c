@@ -26,17 +26,19 @@
 
 #include <glib.h>
 #include <glib/gi18n.h>
+#include <gio/gunixoutputstream.h>
 
 #include "tracker-sparql.h"
 #include "tracker-color.h"
 
 #include <libtracker-sparql/tracker-sparql.h>
 #include <libtracker-common/tracker-common.h>
-#include <libtracker-data/tracker-data.h>
+#include <libtracker-sparql/core/tracker-data.h>
 
 static gchar *database_path;
 static gchar *dbus_service;
 static gchar *remote_service;
+static gchar *output_format;
 static gboolean show_graphs;
 static gchar **iris;
 static gchar *data_type = NULL;
@@ -50,6 +52,10 @@ static GOptionEntry entries[] = {
 	{ "dbus-service", 'b', 0, G_OPTION_ARG_STRING, &dbus_service,
 	  N_("Connects to a DBus service"),
 	  N_("DBus service name")
+	},
+	{ "output", 'o', 0, G_OPTION_ARG_STRING, &output_format,
+	  N_("Output results format: “turtle”, “trig” or “json-ld”"),
+	  N_("RDF_FORMAT")
 	},
 	{ "remote-service", 'r', 0, G_OPTION_ARG_STRING, &remote_service,
 	  N_("Connects to a remote service"),
@@ -103,16 +109,17 @@ create_connection (GError **error)
  * as prefix:rest_of_uri; if not, display as <uri>
  */
 inline static gchar *
-format_urn (GHashTable  *prefixes,
-            const gchar *urn,
-            gboolean     full_namespaces)
+format_urn (TrackerNamespaceManager *namespaces,
+            const gchar             *urn,
+            gboolean                 full_namespaces)
 {
 	gchar *urn_out;
 
 	if (full_namespaces) {
 		urn_out = g_strdup_printf ("<%s>", urn);
 	} else {
-		gchar *shorthand = tracker_sparql_get_shorthand (prefixes, urn);
+		gchar *shorthand =
+			tracker_namespace_manager_compress_uri (namespaces, urn);
 
 		/* If the shorthand is the same as the urn passed, we
 		 * assume it is a resource and pass it in as one,
@@ -136,23 +143,18 @@ format_urn (GHashTable  *prefixes,
 	return urn_out;
 }
 
-/* print a URI prefix in Turtle format */
-static void
-print_prefix (gpointer key,
-              gpointer value,
-              gpointer user_data)
-{
-	g_print ("@prefix %s: <%s#> .\n", (gchar *) value, (gchar *) key);
-}
-
 /* Print triples in Turtle format */
 static void
 print_turtle (TrackerSparqlCursor *cursor,
-              GHashTable          *prefixes,
               gboolean             full_namespaces)
 {
+	TrackerSparqlConnection *conn;
+	TrackerNamespaceManager *namespaces;
 	gchar *predicate;
 	gchar *object;
+
+	conn = tracker_sparql_cursor_get_connection (cursor);
+	namespaces = tracker_sparql_connection_get_namespace_manager (conn);
 
 	while (tracker_sparql_cursor_next (cursor, NULL, NULL)) {
 		const gchar *resource = tracker_sparql_cursor_get_string (cursor, 1, NULL);
@@ -169,7 +171,7 @@ print_turtle (TrackerSparqlCursor *cursor,
 		//	continue;
 		//}
 
-		predicate = format_urn (prefixes, key, full_namespaces);
+		predicate = format_urn (namespaces, key, full_namespaces);
 
 		if (g_ascii_strcasecmp (value_is_resource, "true") == 0) {
 			object = g_strdup_printf ("<%s>", value);
@@ -193,13 +195,17 @@ print_turtle (TrackerSparqlCursor *cursor,
 /* Print graphs and triples in TriG format */
 static void
 print_trig (TrackerSparqlCursor *cursor,
-            GHashTable          *prefixes,
             gboolean             full_namespaces)
 {
+	TrackerSparqlConnection *conn;
+	TrackerNamespaceManager *namespaces;
 	gchar *predicate;
 	gchar *object;
 	gchar *previous_graph = NULL;
 	const gchar *graph = NULL;
+
+	conn = tracker_sparql_cursor_get_connection (cursor);
+	namespaces = tracker_sparql_connection_get_namespace_manager (conn);
 
 	while (tracker_sparql_cursor_next (cursor, NULL, NULL)) {
 		graph = tracker_sparql_cursor_get_string (cursor, 0, NULL);
@@ -227,7 +233,7 @@ print_trig (TrackerSparqlCursor *cursor,
 		//	continue;
 		//}
 
-		predicate = format_urn (prefixes, key, full_namespaces);
+		predicate = format_urn (namespaces, key, full_namespaces);
 
 		if (g_ascii_strcasecmp (value_is_resource, "true") == 0) {
 			object = g_strdup_printf ("<%s>", value);
@@ -291,14 +297,39 @@ print_keyfile (TrackerSparqlCursor *cursor)
 	g_print ("%s\n", data);
 }
 
+static void
+serialize_cb (GObject      *object,
+              GAsyncResult *res,
+              gpointer      user_data)
+{
+	GInputStream *istream;
+	GOutputStream *ostream;
+	GError *error = NULL;
+
+	istream = tracker_sparql_connection_serialize_finish (TRACKER_SPARQL_CONNECTION (object),
+	                                                      res, &error);
+	if (istream) {
+		ostream = g_unix_output_stream_new (STDOUT_FILENO, FALSE);
+		g_output_stream_splice (ostream, istream, G_OUTPUT_STREAM_SPLICE_NONE, NULL, &error);
+		g_output_stream_close (ostream, NULL, NULL);
+		g_object_unref (ostream);
+	}
+
+	if (error)
+		g_printerr ("%s\n", error ? error->message : _("No error given"));
+
+	g_object_unref (istream);
+	g_main_loop_quit (user_data);
+}
+
 static int
 export_run_default (void)
 {
 	g_autoptr(TrackerSparqlConnection) connection = NULL;
-	g_autoptr(TrackerSparqlCursor) cursor = NULL;
 	g_autoptr(GError) error = NULL;
-	g_autoptr(GHashTable) prefixes = NULL;
 	g_autoptr(GString) query = NULL;
+	g_autoptr(GMainLoop) loop = NULL;
+	TrackerRdfFormat format;
 	guint i;
 
 	connection = create_connection (&error);
@@ -310,56 +341,61 @@ export_run_default (void)
 		return EXIT_FAILURE;
 	}
 
-	prefixes = tracker_sparql_get_prefixes (connection);
-
-	query = g_string_new (NULL);
-	g_string_append (query,
-	                 "SELECT ?g ?u ?p ?v "
-	                 "       (EXISTS { ?p rdfs:range [ rdfs:subClassOf rdfs:Resource ] }) AS ?is_resource "
-	                 "{ "
-	                 "    GRAPH ?g { "
-	                 "        ?u ?p ?v ");
+	query = g_string_new ("DESCRIBE ");
 
 	if (iris) {
-		g_string_append (query, "FILTER (?u IN (");
-
-		for (i = 0; iris[i]; i++) {
-			if (i != 0)
-				g_string_append_c (query, ',');
-			g_string_append_printf (query, "<%s>", iris[i]);
-		}
-
-		g_string_append (query, "))");
+		for (i = 0; iris[i] != NULL; i++)
+			g_string_append_printf (query, "<%s> ", iris[i]);
 	} else {
 		g_string_append (query,
-		                 "FILTER NOT EXISTS { ?u a rdf:Property } "
-		                 "FILTER NOT EXISTS { ?u a rdfs:Class } "
-		                 "FILTER NOT EXISTS { ?u a nrl:Namespace } ");
+		                 "?u {"
+		                 "  ?u a rdfs:Resource . "
+		                 "  FILTER NOT EXISTS { ?u a rdf:Property } "
+		                 "  FILTER NOT EXISTS { ?u a rdfs:Class } "
+		                 "  FILTER NOT EXISTS { ?u a nrl:Namespace } "
+		                 "}");
 	}
 
-	g_string_append (query,
-	                 "    } "
-	                 "} ORDER BY ?g ?u");
+	loop = g_main_loop_new (NULL, FALSE);
 
-	cursor = tracker_sparql_connection_query (connection, query->str, NULL, &error);
+	if (output_format) {
+		/* Matches TrackerRdfFormat */
+		const gchar *formats[] = {
+			"turtle",
+			"trig",
+			"json-ld",
+		};
+		guint i;
+		gboolean found = FALSE;
 
-	if (error) {
-		g_printerr ("%s, %s\n",
-		            _("Could not run query"),
-		            error->message);
-		return EXIT_FAILURE;
+		G_STATIC_ASSERT (G_N_ELEMENTS (formats) == TRACKER_N_RDF_FORMATS);
+
+		for (i = 0; i < G_N_ELEMENTS (formats); i++) {
+			if (g_strcmp0 (formats[i], output_format) == 0) {
+				format = i;
+				found = TRUE;
+				break;
+			}
+		}
+
+		if (!found) {
+			g_printerr (_("Unsupported serialization format “%s”\n"), output_format);
+			return EXIT_FAILURE;
+		}
+	} else if (show_graphs) {
+		format = TRACKER_RDF_FORMAT_TRIG;
+	} else {
+		format = TRACKER_RDF_FORMAT_TURTLE;
 	}
 
 	tracker_term_pipe_to_pager ();
 
-	g_hash_table_foreach (prefixes, (GHFunc) print_prefix, NULL);
-	g_print ("\n");
-
-	if (show_graphs) {
-		print_trig (cursor, prefixes, FALSE);
-	} else {
-		print_turtle (cursor, prefixes, FALSE);
-	}
+	tracker_sparql_connection_serialize_async (connection,
+	                                           TRACKER_SERIALIZE_FLAGS_NONE,
+	                                           format,
+	                                           query->str,
+	                                           NULL, serialize_cb, loop);
+	g_main_loop_run (loop);
 
 	tracker_term_pager_close ();
 
@@ -391,13 +427,11 @@ export_2to3_with_query (const gchar  *query,
 	db_manager = tracker_db_manager_new (TRACKER_DB_MANAGER_READONLY |
 	                                     TRACKER_DB_MANAGER_SKIP_VERSION_CHECK,
 	                                     store,
-	                                     NULL, FALSE,
-	                                     1, 1, NULL, NULL, NULL, NULL, &inner_error);
+	                                     1, NULL, &inner_error);
 
 	if (inner_error) {
 		g_propagate_prefixed_error (error, inner_error,
 		                            "%s: ", _("Could not run query"));
-		g_object_unref (db_manager);
 		return FALSE;
 	}
 
@@ -410,7 +444,6 @@ export_2to3_with_query (const gchar  *query,
 	if (!stmt) {
 		g_propagate_prefixed_error (error, inner_error,
 		                            "%s: ", _("Could not run query"));
-		g_object_unref (db_manager);
 		return FALSE;
 	}
 
@@ -420,16 +453,15 @@ export_2to3_with_query (const gchar  *query,
 	if (!cursor) {
 		g_propagate_prefixed_error (error, inner_error,
 		                            "%s: ", _("Could not run query"));
-		g_object_unref (db_manager);
 		return FALSE;
 	}
 
 	if (keyfile) {
 		print_keyfile (cursor);
 	} if (show_graphs) {
-		print_trig (cursor, NULL, FALSE);
+		print_trig (cursor, FALSE);
 	} else {
-		print_turtle (cursor, NULL, FALSE);
+		print_turtle (cursor, FALSE);
 	}
 
 	g_object_unref (cursor);
@@ -503,7 +535,7 @@ export_2to3_run (void)
 }
 
 int
-tracker_export (int argc, const char **argv)
+main (int argc, const char **argv)
 {
 	GOptionContext *context;
 	GError *error = NULL;

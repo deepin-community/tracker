@@ -21,6 +21,7 @@
 #define __LIBTRACKER_RESOURCE_H__
 
 #include <glib-object.h>
+#include <libtracker-sparql/tracker-enums.h>
 #include <libtracker-sparql/tracker-version.h>
 #include <libtracker-sparql/tracker-namespace-manager.h>
 
@@ -51,6 +52,8 @@ TRACKER_AVAILABLE_IN_ALL
 void tracker_resource_set_string (TrackerResource *self, const char *property_uri, const char *value);
 TRACKER_AVAILABLE_IN_ALL
 void tracker_resource_set_uri (TrackerResource *self, const char *property_uri, const char *value);
+TRACKER_AVAILABLE_IN_3_2
+void tracker_resource_set_datetime (TrackerResource *self, const char *property_uri, GDateTime *value);
 
 TRACKER_AVAILABLE_IN_ALL
 void tracker_resource_add_gvalue (TrackerResource *self, const char *property_uri, const GValue *value);
@@ -70,6 +73,8 @@ TRACKER_AVAILABLE_IN_ALL
 void tracker_resource_add_string (TrackerResource *self, const char *property_uri, const char *value);
 TRACKER_AVAILABLE_IN_ALL
 void tracker_resource_add_uri (TrackerResource *self, const char *property_uri, const char *value);
+TRACKER_AVAILABLE_IN_3_2
+void tracker_resource_add_datetime (TrackerResource *self, const char *property_uri, GDateTime *value);
 
 TRACKER_AVAILABLE_IN_ALL
 GList *tracker_resource_get_values (TrackerResource *self, const char *property_uri);
@@ -88,6 +93,8 @@ TRACKER_AVAILABLE_IN_ALL
 const char *tracker_resource_get_first_string (TrackerResource *self, const char *property_uri);
 TRACKER_AVAILABLE_IN_ALL
 const char *tracker_resource_get_first_uri (TrackerResource *self, const char *property_uri);
+TRACKER_AVAILABLE_IN_3_2
+GDateTime *tracker_resource_get_first_datetime (TrackerResource *self, const char *property_uri);
 
 TRACKER_AVAILABLE_IN_ALL
 const char *tracker_resource_get_identifier (TrackerResource *self);
@@ -99,14 +106,20 @@ gint tracker_resource_identifier_compare_func (TrackerResource *resource, const 
 TRACKER_AVAILABLE_IN_ALL
 GList *tracker_resource_get_properties (TrackerResource *resource);
 
-TRACKER_AVAILABLE_IN_ALL
+TRACKER_DEPRECATED_IN_3_4_FOR(tracker_resource_print_rdf)
 char *tracker_resource_print_turtle(TrackerResource *self, TrackerNamespaceManager *namespaces);
 
 TRACKER_AVAILABLE_IN_ALL
 char *tracker_resource_print_sparql_update (TrackerResource *self, TrackerNamespaceManager *namespaces, const char *graph_id);
 
-TRACKER_AVAILABLE_IN_ALL
+TRACKER_DEPRECATED_IN_3_5_FOR(tracker_resource_print_rdf)
 char *tracker_resource_print_jsonld (TrackerResource *self, TrackerNamespaceManager *namespaces);
+
+TRACKER_AVAILABLE_IN_3_4
+char * tracker_resource_print_rdf (TrackerResource         *self,
+                                   TrackerNamespaceManager *namespaces,
+                                   TrackerRdfFormat         format,
+                                   const gchar             *graph);
 
 TRACKER_AVAILABLE_IN_ALL
 GVariant * tracker_resource_serialize (TrackerResource *resource);

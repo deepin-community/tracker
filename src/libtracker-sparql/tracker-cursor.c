@@ -17,16 +17,33 @@
  * Boston, MA  02110-1301, USA.
  */
 /**
- * SECTION: tracker-sparql-cursor
- * @short_description: Iteration of the query results
- * @title: TrackerSparqlCursor
- * @stability: Stable
- * @include: tracker-sparql.h
+ * TrackerSparqlCursor:
  *
- * <para>
- * #TrackerSparqlCursor is an object which provides methods to iterate the
- * results of a query to the Tracker Store.
- * </para>
+ * `TrackerSparqlCursor` provides the methods to iterate the results of a SPARQL query.
+ *
+ * Cursors are obtained through e.g. [method@Tracker.SparqlStatement.execute]
+ * or [method@Tracker.SparqlConnection.query] after the SPARQL query has been
+ * executed.
+ *
+ * When created, a cursor does not point to any element, [method@Tracker.SparqlCursor.next]
+ * is necessary to iterate one by one to the first (and following) results.
+ * When the cursor iterated across all rows in the result set, [method@Tracker.SparqlCursor.next]
+ * will return %FALSE with no error set.
+ *
+ * On each row, it is possible to extract the result values through the
+ * [method@Tracker.SparqlCursor.get_integer], [method@Tracker.SparqlCursor.get_string], etc... family
+ * of methods. The column index of those functions starts at 0. The number of columns is
+ * dependent on the SPARQL query issued, but may be checked at runtime through the
+ * [method@Tracker.SparqlCursor.get_n_columns] method.
+ *
+ * After a cursor is iterated, it is recommended to call [method@Tracker.SparqlCursor.close]
+ * explicitly to free up resources for other users of the same [class@Tracker.SparqlConnection],
+ * this is especially important in garbage collected languages. These resources
+ * will be also implicitly freed on cursor object finalization.
+ *
+ * It is possible to use a given `TrackerSparqlCursor` in other threads than
+ * the one it was created from. It must be however used from just one thread
+ * at any given time.
  */
 #include "config.h"
 
@@ -44,7 +61,6 @@ static GParamSpec *props[N_PROPS];
 
 typedef struct {
 	TrackerSparqlConnection *connection;
-	gint n_columns;
 } TrackerSparqlCursorPrivate;
 
 G_DEFINE_ABSTRACT_TYPE_WITH_PRIVATE (TrackerSparqlCursor, tracker_sparql_cursor,
@@ -100,6 +116,21 @@ tracker_sparql_cursor_real_get_boolean (TrackerSparqlCursor *cursor,
 	return g_ascii_strcasecmp (text, "true") == 0;
 }
 
+static GDateTime *
+tracker_sparql_cursor_real_get_datetime (TrackerSparqlCursor *cursor,
+                                         gint                 column)
+{
+	const gchar *text;
+	GDateTime *date_time;
+
+	g_return_val_if_fail (tracker_sparql_cursor_real_is_bound (cursor, column), NULL);
+
+	text = tracker_sparql_cursor_get_string (cursor, column, NULL);
+	date_time = g_date_time_new_from_iso8601 (text, NULL);
+
+	return date_time;
+}
+
 static void
 tracker_sparql_cursor_finalize (GObject *object)
 {
@@ -123,9 +154,6 @@ tracker_sparql_cursor_set_property (GObject      *object,
 	case PROP_CONNECTION:
 		priv->connection = g_value_dup_object (value);
 		break;
-	case PROP_N_COLUMNS:
-		priv->n_columns = g_value_get_int (value);
-		break;
 	default:
 		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
 	}
@@ -145,7 +173,7 @@ tracker_sparql_cursor_get_property (GObject    *object,
 		g_value_set_object (value, priv->connection);
 		break;
 	case PROP_N_COLUMNS:
-		g_value_set_int (value, priv->n_columns);
+		g_value_set_int (value, tracker_sparql_cursor_get_n_columns (cursor));
 		break;
 	default:
 		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -164,12 +192,13 @@ tracker_sparql_cursor_class_init (TrackerSparqlCursorClass *klass)
 	klass->get_integer = tracker_sparql_cursor_real_get_integer;
 	klass->get_double = tracker_sparql_cursor_real_get_double;
 	klass->get_boolean = tracker_sparql_cursor_real_get_boolean;
+	klass->get_datetime = tracker_sparql_cursor_real_get_datetime;
 	klass->is_bound = tracker_sparql_cursor_real_is_bound;
 
 	/**
 	 * TrackerSparqlCursor:connection:
 	 *
-	 * The #TrackerSparqlConnection used to retrieve the results.
+	 * The [class@Tracker.SparqlConnection] used to retrieve the results.
 	 */
 	props[PROP_CONNECTION] =
 		g_param_spec_object ("connection",
@@ -181,9 +210,9 @@ tracker_sparql_cursor_class_init (TrackerSparqlCursorClass *klass)
 		                     G_PARAM_READABLE |
 		                     G_PARAM_WRITABLE);
 	/**
-	 * TrackerSparqlCursor:n_columns:
+	 * TrackerSparqlCursor:n-columns:
 	 *
-	 * Number of columns available in the results to iterate.
+	 * Number of columns available in the result set.
 	 */
 	props[PROP_N_COLUMNS] =
 		g_param_spec_int ("n-columns",
@@ -198,12 +227,12 @@ tracker_sparql_cursor_class_init (TrackerSparqlCursorClass *klass)
 
 /**
  * tracker_sparql_cursor_get_connection:
- * @cursor: a #TrackerSparqlCursor
+ * @cursor: a `TrackerSparqlCursor`
  *
- * Returns the #TrackerSparqlConnection associated with this
- * #TrackerSparqlCursor.
+ * Returns the [class@Tracker.SparqlConnection] associated with this
+ * `TrackerSparqlCursor`.
  *
- * Returns: (transfer none): the cursor #TrackerSparqlConnection. The
+ * Returns: (transfer none): the cursor [class@Tracker.SparqlConnection]. The
  * returned object must not be unreferenced by the caller.
  */
 TrackerSparqlConnection *
@@ -230,14 +259,15 @@ tracker_sparql_cursor_set_connection (TrackerSparqlCursor     *cursor,
 
 /**
  * tracker_sparql_cursor_get_n_columns:
- * @cursor: a #TrackerSparqlCursor
+ * @cursor: a `TrackerSparqlCursor`
+ *
+ * Retrieves the number of columns available in the result set.
  *
  * This method should only be called after a successful
- * tracker_sparql_cursor_next(); otherwise its return value
+ * [method@Tracker.SparqlCursor.next], otherwise its return value
  * will be undefined.
  *
- * Returns: a #gint representing the number of columns available in the
- * results to iterate.
+ * Returns: The number of columns returned in the result set.
  */
 gint
 tracker_sparql_cursor_get_n_columns (TrackerSparqlCursor *cursor)
@@ -249,15 +279,19 @@ tracker_sparql_cursor_get_n_columns (TrackerSparqlCursor *cursor)
 
 /**
  * tracker_sparql_cursor_get_string:
- * @cursor: a #TrackerSparqlCursor
+ * @cursor: a `TrackerSparqlCursor`
  * @column: column number to retrieve (first one is 0)
  * @length: (out) (nullable): length of the returned string, or %NULL
  *
  * Retrieves a string representation of the data in the current
  * row in @column.
  *
+ * Any type may be converted to a string. If the value is not bound
+ * (See [method@Tracker.SparqlCursor.is_bound]) this method will return %NULL.
+ *
  * Returns: (nullable): a string which must not be freed. %NULL is returned if
- * the column is not in the [0,#n_columns] range.
+ * the column is not in the `[0, n_columns]` range, or if the row/column
+ * refer to a nullable optional value in the result set.
  */
 const gchar *
 tracker_sparql_cursor_get_string (TrackerSparqlCursor *cursor,
@@ -268,17 +302,57 @@ tracker_sparql_cursor_get_string (TrackerSparqlCursor *cursor,
 
 	return TRACKER_SPARQL_CURSOR_GET_CLASS (cursor)->get_string (cursor,
 	                                                             column,
+	                                                             NULL,
+	                                                             length);
+}
+
+/**
+ * tracker_sparql_cursor_get_langstring:
+ * @cursor: a `TrackerSparqlCursor`
+ * @column: column number to retrieve
+ * @langtag: (out): language tag of the returned string, or %NULL if the
+ *   string has no language tag
+ * @length: (out) (nullable): length of the returned string
+ *
+ * Retrieves a string representation of the data in the current
+ * row in @column. If the string has language information (i.e. it is
+ * a `rdf:langString`](rdf-ontology.html#rdf:langString)), the language
+ * tag will be returned in the location provided through @langtag. This
+ * language tag will typically be in a format conforming
+ * [RFC 5646](https://www.rfc-editor.org/rfc/rfc5646.html).
+ *
+ * Returns: (nullable): a string which must not be freed. %NULL is returned if
+ * the column is not in the `[0, n_columns]` range, or if the row/column
+ * refer to a nullable optional value in the result set.
+ *
+ * Since: 3.7
+ **/
+const gchar *
+tracker_sparql_cursor_get_langstring (TrackerSparqlCursor  *cursor,
+                                      gint                  column,
+                                      const gchar         **langtag,
+                                      glong                *length)
+{
+	g_return_val_if_fail (TRACKER_IS_SPARQL_CURSOR (cursor), NULL);
+	g_return_val_if_fail (langtag != NULL, NULL);
+
+	return TRACKER_SPARQL_CURSOR_GET_CLASS (cursor)->get_string (cursor,
+	                                                             column,
+	                                                             langtag,
 	                                                             length);
 }
 
 /**
  * tracker_sparql_cursor_get_boolean:
- * @cursor: a #TrackerSparqlCursor
+ * @cursor: a `TrackerSparqlCursor`
  * @column: column number to retrieve (first one is 0)
  *
  * Retrieve a boolean for the current row in @column.
  *
- * Returns: a #gboolean.
+ * If the row/column do not have a boolean value, the result is
+ * undefined, see [method@Tracker.SparqlCursor.get_value_type].
+ *
+ * Returns: a boolean value.
  */
 gboolean
 tracker_sparql_cursor_get_boolean (TrackerSparqlCursor *cursor,
@@ -292,12 +366,15 @@ tracker_sparql_cursor_get_boolean (TrackerSparqlCursor *cursor,
 
 /**
  * tracker_sparql_cursor_get_double:
- * @cursor: a #TrackerSparqlCursor
+ * @cursor: a `TrackerSparqlCursor`
  * @column: column number to retrieve (first one is 0)
  *
  * Retrieve a double for the current row in @column.
  *
- * Returns: a double.
+ * If the row/column do not have a integer or double value, the result is
+ * undefined, see [method@Tracker.SparqlCursor.get_value_type].
+ *
+ * Returns: a double value.
  */
 gdouble
 tracker_sparql_cursor_get_double (TrackerSparqlCursor *cursor,
@@ -311,12 +388,15 @@ tracker_sparql_cursor_get_double (TrackerSparqlCursor *cursor,
 
 /**
  * tracker_sparql_cursor_get_integer:
- * @cursor: a #TrackerSparqlCursor
+ * @cursor: a `TrackerSparqlCursor`
  * @column: column number to retrieve (first one is 0)
  *
  * Retrieve an integer for the current row in @column.
  *
- * Returns: a #gint64.
+ * If the row/column do not have an integer value, the result is
+ * undefined, see [method@Tracker.SparqlCursor.get_value_type].
+ *
+ * Returns: a 64-bit integer value.
  */
 gint64
 tracker_sparql_cursor_get_integer (TrackerSparqlCursor *cursor,
@@ -330,12 +410,23 @@ tracker_sparql_cursor_get_integer (TrackerSparqlCursor *cursor,
 
 /**
  * tracker_sparql_cursor_get_value_type:
- * @cursor: a #TrackerSparqlCursor
+ * @cursor: a `TrackerSparqlCursor`
  * @column: column number to retrieve (first one is 0)
  *
- * The data type bound to the current row in @column is returned.
+ * Returns the data type bound to the current row and the given @column.
  *
- * Returns: a #TrackerSparqlValueType.
+ * If the column is unbound, the value will be %TRACKER_SPARQL_VALUE_TYPE_UNBOUND.
+ * See also [method@Tracker.SparqlCursor.is_bound].
+ *
+ * Values of type #TRACKER_SPARQL_VALUE_TYPE_RESOURCE and
+ * #TRACKER_SPARQL_VALUE_TYPE_BLANK_NODE can be considered equivalent, the
+ * difference is the resource being referenced as a named IRI or a blank
+ * node.
+ *
+ * All other [enum@Tracker.SparqlValueType] value types refer to literal values.
+ *
+ * Returns: a [enum@Tracker.SparqlValueType] expressing the content type of
+ *   the given column for the current row.
  */
 TrackerSparqlValueType
 tracker_sparql_cursor_get_value_type (TrackerSparqlCursor *cursor,
@@ -350,12 +441,17 @@ tracker_sparql_cursor_get_value_type (TrackerSparqlCursor *cursor,
 
 /**
  * tracker_sparql_cursor_get_variable_name:
- * @cursor: a #TrackerSparqlCursor
+ * @cursor: a `TrackerSparqlCursor`
  * @column: column number to retrieve (first one is 0)
  *
- * Retrieves the variable name for the current row in @column.
+ * Retrieves the name of the given @column.
  *
- * Returns: a string which must not be freed.
+ * This name will be defined at the SPARQL query, either
+ * implicitly from the names of the variables returned in
+ * the resultset, or explicitly through the `AS ?var` SPARQL
+ * syntax.
+ *
+ * Returns: (nullable): The name of the given column.
  */
 const gchar *
 tracker_sparql_cursor_get_variable_name (TrackerSparqlCursor *cursor,
@@ -368,25 +464,49 @@ tracker_sparql_cursor_get_variable_name (TrackerSparqlCursor *cursor,
 }
 
 /**
- * tracker_sparql_cursor_close:
- * @cursor: a #TrackerSparqlCursor
+ * tracker_sparql_cursor_get_datetime:
+ * @cursor: a `TrackerSparqlCursor`
+ * @column: Column number to retrieve (first one is 0)
  *
- * Closes the iterator, making it invalid.
+ * Retrieves a [type@GLib.DateTime] pointer for the current row in @column.
+ *
+ * Returns: (transfer full) (nullable): [type@GLib.DateTime] object, or %NULL if the given column does not
+ *   contain a [xsd:date](xsd-ontology.html#xsd:date) or [xsd:dateTime](xsd-ontology.html#xsd:dateTime).
+ *
+ * Since: 3.2
+ */
+GDateTime *
+tracker_sparql_cursor_get_datetime (TrackerSparqlCursor *cursor,
+                                    gint                 column)
+{
+	g_return_val_if_fail (TRACKER_IS_SPARQL_CURSOR (cursor), NULL);
+
+	return TRACKER_SPARQL_CURSOR_GET_CLASS (cursor)->get_datetime (cursor,
+	                                                               column);
+}
+
+/**
+ * tracker_sparql_cursor_close:
+ * @cursor: a `TrackerSparqlCursor`
+ *
+ * Closes the cursor. The object can only be freed after this call.
  */
 void
 tracker_sparql_cursor_close (TrackerSparqlCursor *cursor)
 {
 	g_return_if_fail (TRACKER_IS_SPARQL_CURSOR (cursor));
 
-	return TRACKER_SPARQL_CURSOR_GET_CLASS (cursor)->close (cursor);
+	TRACKER_SPARQL_CURSOR_GET_CLASS (cursor)->close (cursor);
 }
 
 /**
  * tracker_sparql_cursor_is_bound:
- * @cursor: a #TrackerSparqlCursor
+ * @cursor: a `TrackerSparqlCursor`
  * @column: column number to retrieve (first one is 0)
  *
- * If the current row and @column are bound to a value, %TRUE is returned.
+ * Returns whether the given @column has a bound value in the current row.
+ *
+ * This may not be the case through e.g. the `OPTIONAL { }` SPARQL syntax.
  *
  * Returns: a %TRUE or %FALSE.
  */
@@ -401,14 +521,17 @@ tracker_sparql_cursor_is_bound (TrackerSparqlCursor *cursor,
 
 /**
  * tracker_sparql_cursor_next:
- * @cursor: a #TrackerSparqlCursor
- * @cancellable: a #GCancellable used to cancel the operation
- * @error: #GError for error reporting.
+ * @cursor: a `TrackerSparqlCursor`
+ * @cancellable: (nullable): Optional [type@Gio.Cancellable]
+ * @error: Error location
  *
- * Iterates to the next result. This is completely synchronous and
- * it may block.
+ * Iterates the cursor to the next result.
  *
- * Returns: %FALSE if no more results found, otherwise %TRUE.
+ * If the cursor was not started, it will point to the first result after
+ * this call. This operation is completely synchronous and it may block,
+ * see [method@Tracker.SparqlCursor.next_async] for an asynchronous variant.
+ *
+ * Returns: %FALSE if there are no more results or if an error is found, otherwise %TRUE.
  */
 gboolean
 tracker_sparql_cursor_next (TrackerSparqlCursor  *cursor,
@@ -434,13 +557,21 @@ tracker_sparql_cursor_next (TrackerSparqlCursor  *cursor,
 
 /**
  * tracker_sparql_cursor_next_async:
- * @cursor: a #TrackerSparqlCursor
- * @cancellable: a #GCancellable used to cancel the operation
- * @callback: user-defined #GAsyncReadyCallback to be called when
+ * @cursor: a `TrackerSparqlCursor`
+ * @cancellable: (nullable): Optional [type@Gio.Cancellable]
+ * @callback: user-defined [type@Gio.AsyncReadyCallback] to be called when
  *            asynchronous operation is finished.
  * @user_data: user-defined data to be passed to @callback
  *
- * Iterates, asynchronously, to the next result.
+ * Iterates the cursor asyncronously to the next result.
+ *
+ * If the cursor was not started, it will point to the first result after
+ * this operation completes.
+ *
+ * In the period between this call and the corresponding
+ * [method@Tracker.SparqlCursor.next_finish] call, the other cursor methods
+ * should not be used, nor their results trusted. The cursor should only
+ * be iterated once at a time.
  */
 void
 tracker_sparql_cursor_next_async (TrackerSparqlCursor  *cursor,
@@ -451,21 +582,22 @@ tracker_sparql_cursor_next_async (TrackerSparqlCursor  *cursor,
 	g_return_if_fail (TRACKER_IS_SPARQL_CURSOR (cursor));
 	g_return_if_fail (!cancellable || G_IS_CANCELLABLE (cancellable));
 
-	return TRACKER_SPARQL_CURSOR_GET_CLASS (cursor)->next_async (cursor,
-	                                                             cancellable,
-	                                                             callback,
-	                                                             user_data);
+	TRACKER_SPARQL_CURSOR_GET_CLASS (cursor)->next_async (cursor,
+	                                                      cancellable,
+	                                                      callback,
+	                                                      user_data);
 }
 
 /**
  * tracker_sparql_cursor_next_finish:
- * @cursor: a #TrackerSparqlCursor
- * @res: a #GAsyncResult with the result of the operation
- * @error: #GError for error reporting.
+ * @cursor: a `TrackerSparqlCursor`
+ * @res: a [type@Gio.AsyncResult] with the result of the operation
+ * @error: Error location
  *
- * Finishes the asynchronous iteration to the next result.
+ * Finishes the asynchronous iteration to the next result started with
+ * [method@Tracker.SparqlCursor.next_async].
  *
- * Returns: %FALSE if no more results found, otherwise %TRUE.
+ * Returns: %FALSE if there are no more results or if an error is found, otherwise %TRUE.
  */
 gboolean
 tracker_sparql_cursor_next_finish (TrackerSparqlCursor  *cursor,
@@ -491,14 +623,19 @@ tracker_sparql_cursor_next_finish (TrackerSparqlCursor  *cursor,
 
 /**
  * tracker_sparql_cursor_rewind:
- * @cursor: a #TrackerSparqlCursor
+ * @cursor: a `TrackerSparqlCursor`
  *
  * Resets the iterator to point back to the first result.
+ *
+ * Deprecated: 3.5: This function only works on cursors
+ * from direct [class@Tracker.SparqlConnection] objects and cannot work
+ * reliably across all cursor types. Issue a different query to
+ * obtain a new cursor.
  */
 void
 tracker_sparql_cursor_rewind (TrackerSparqlCursor *cursor)
 {
 	g_return_if_fail (TRACKER_IS_SPARQL_CURSOR (cursor));
 
-	return TRACKER_SPARQL_CURSOR_GET_CLASS (cursor)->rewind (cursor);
+	TRACKER_SPARQL_CURSOR_GET_CLASS (cursor)->rewind (cursor);
 }

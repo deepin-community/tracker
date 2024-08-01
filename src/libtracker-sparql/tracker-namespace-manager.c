@@ -26,39 +26,40 @@
 
 #include "tracker-namespace-manager.h"
 #include "tracker-ontologies.h"
+#include "tracker-private.h"
 
 #define MAX_PREFIX_LENGTH 100
 
-struct _TrackerNamespaceManager {
-	GObject parent;
-};
+typedef struct {
+	const gchar *prefix;
+	const gchar *uri;
+	int uri_len;
+} PrefixMap;
 
 typedef struct {
 	GHashTable *prefix_to_namespace;
 	GHashTable *namespace_to_prefix;
+	GArray *prefix_map;
+	gboolean sealed;
 } TrackerNamespaceManagerPrivate;
 
-G_DEFINE_TYPE_WITH_PRIVATE (TrackerNamespaceManager, tracker_namespace_manager, G_TYPE_OBJECT);
+G_DEFINE_TYPE_WITH_PRIVATE (TrackerNamespaceManager, tracker_namespace_manager, G_TYPE_OBJECT)
 #define GET_PRIVATE(object)  (tracker_namespace_manager_get_instance_private (object))
 
 /**
- * SECTION: tracker-namespace-manager
- * @short_description: A set of well-known namespaces, and known abbreviations for them
- * @title: TrackerNamespaceManager
- * @stability: Stable
- * @include: tracker-namespace-manager.h
+ * TrackerNamespaceManager:
  *
- * <para>
- * #TrackerNamespaceManager keeps track of namespaces. It allows you to assign
- * short prefixes for them to avoid typing full URLs all the time.
+ * `TrackerNamespaceManager` object represents a mapping between namespaces and
+ * their shortened prefixes.
  *
- * The syntax used is that of Compact URIs (CURIEs) as defined here:
- * (https://www.w3.org/TR/2010/NOTE-curie-20101216)
+ * This object keeps track of namespaces, and allows you to assign
+ * short prefixes for them to avoid frequent use of full namespace IRIs. The syntax
+ * used is that of [Compact URIs (CURIEs)](https://www.w3.org/TR/2010/NOTE-curie-20101216).
  *
- * Usually you will want to use the default namespace manager, as returned by
- * tracker_namespace_manager_get_default(). This has a set of well-known
- * prefixes predefined.
- * </para>
+ * Usually you will want to use a namespace manager obtained through
+ * [method@Tracker.SparqlConnection.get_namespace_manager] from the
+ * [class@Tracker.SparqlConnection] that manages the RDF data, as that will
+ * contain all prefixes and namespaces that are pre-defined by its ontology.
  */
 
 static void finalize     (GObject *object);
@@ -78,6 +79,7 @@ tracker_namespace_manager_init (TrackerNamespaceManager *self)
 
 	priv->prefix_to_namespace = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, g_free);
 	priv->namespace_to_prefix = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, g_free);
+	priv->prefix_map = g_array_new (FALSE, FALSE, sizeof (PrefixMap));
 }
 
 static void
@@ -89,6 +91,7 @@ finalize (GObject *object)
 
 	g_hash_table_unref (priv->prefix_to_namespace);
 	g_hash_table_unref (priv->namespace_to_prefix);
+	g_array_unref (priv->prefix_map);
 
 	(G_OBJECT_CLASS (tracker_namespace_manager_parent_class)->finalize)(object);
 }
@@ -96,9 +99,9 @@ finalize (GObject *object)
 /**
  * tracker_namespace_manager_new:
  *
- * Creates a new #TrackerNamespaceManager instance.
+ * Creates a new, empty `TrackerNamespaceManager` instance.
  *
- * Returns: a new #TrackerNamespaceManager instance
+ * Returns: a new `TrackerNamespaceManager` instance
  */
 TrackerNamespaceManager *
 tracker_namespace_manager_new ()
@@ -113,21 +116,23 @@ tracker_namespace_manager_new ()
 /**
  * tracker_namespace_manager_get_default:
  *
- * Returns the global #TrackerNamespaceManager that contains a set of well-known
- * namespaces and prefixes, such as rdf:, rdfs:, nie:, tracker:, etc.
+ * Returns the global `TrackerNamespaceManager` that contains a set of well-known
+ * namespaces and prefixes, such as `rdf:`, `rdfs:`, `nie:`, `tracker:`, etc.
  *
  * Note that the list of prefixes and namespaces is hardcoded in
  * libtracker-sparql. It may not correspond with the installed set of
  * ontologies, if they have been modified since they were installed.
  *
- * Returns: (transfer none): a global, shared #TrackerNamespaceManager instance
+ * Returns: (transfer none): a global, shared `TrackerNamespaceManager` instance
+ *
+ * Deprecated: 3.3: Use [method@Tracker.SparqlConnection.get_namespace_manager] instead.
  */
 TrackerNamespaceManager *
 tracker_namespace_manager_get_default ()
 {
-	static TrackerNamespaceManager * volatile default_namespace_manager__volatile = NULL;
+	static TrackerNamespaceManager *default_namespace_manager = NULL;
 
-	if (g_once_init_enter (&default_namespace_manager__volatile)) {
+	if (g_once_init_enter (&default_namespace_manager)) {
 		TrackerNamespaceManager *manager = tracker_namespace_manager_new();
 
 		tracker_namespace_manager_add_prefix (manager, "rdf", TRACKER_PREFIX_RDF);
@@ -146,21 +151,23 @@ tracker_namespace_manager_get_default ()
 		tracker_namespace_manager_add_prefix (manager, "nmm", TRACKER_PREFIX_NMM);
 		tracker_namespace_manager_add_prefix (manager, "mfo", TRACKER_PREFIX_MFO);
 		tracker_namespace_manager_add_prefix (manager, "osinfo", TRACKER_PREFIX_OSINFO);
+		tracker_namespace_manager_add_prefix (manager, "fts",
+		                                      "http://tracker.api.gnome.org/ontology/v3/fts#");
 
-		g_once_init_leave (&default_namespace_manager__volatile, manager);
+		g_once_init_leave (&default_namespace_manager, manager);
 	}
 
-	return default_namespace_manager__volatile;
+	return default_namespace_manager;
 }
 
 /**
  * tracker_namespace_manager_has_prefix:
- * @self: a #TrackerNamespaceManager
+ * @self: a `TrackerNamespaceManager`
  * @prefix: a string
  *
  * Returns whether @prefix is known.
  *
- * Returns: %TRUE if the #TrackerNamespaceManager knows about @prefix, %FALSE otherwise
+ * Returns: %TRUE if the `TrackerNamespaceManager` knows about @prefix, %FALSE otherwise
  */
 gboolean
 tracker_namespace_manager_has_prefix (TrackerNamespaceManager *self,
@@ -177,13 +184,13 @@ tracker_namespace_manager_has_prefix (TrackerNamespaceManager *self,
 
 /**
  * tracker_namespace_manager_lookup_prefix:
- * @self: a #TrackerNamespaceManager
+ * @self: a `TrackerNamespaceManager`
  * @prefix: a string
  *
  * Looks up the namespace URI corresponding to @prefix, or %NULL if the prefix
  * is not known.
  *
- * Returns: (nullable): a string owned by the #TrackerNamespaceManager, or %NULL
+ * Returns: (nullable): a string owned by the `TrackerNamespaceManager`, or %NULL
  */
 const char *
 tracker_namespace_manager_lookup_prefix (TrackerNamespaceManager *self,
@@ -200,7 +207,7 @@ tracker_namespace_manager_lookup_prefix (TrackerNamespaceManager *self,
 
 /**
  * tracker_namespace_manager_add_prefix:
- * @self: a #TrackerNamespaceManager
+ * @self: A `TrackerNamespaceManager`
  * @prefix: a short, unique prefix to identify @namespace
  * @ns: the URL of the given namespace
  *
@@ -208,6 +215,10 @@ tracker_namespace_manager_lookup_prefix (TrackerNamespaceManager *self,
  *
  * Only one prefix is allowed for a given namespace, and all prefixes must
  * be unique.
+ *
+ * Since 3.3, The `TrackerNamespaceManager` instances obtained through
+ * [method@Tracker.SparqlConnection.get_namespace_manager] are "sealed",
+ * this API call should not performed on those.
  */
 void
 tracker_namespace_manager_add_prefix (TrackerNamespaceManager *self,
@@ -216,12 +227,15 @@ tracker_namespace_manager_add_prefix (TrackerNamespaceManager *self,
 {
 	TrackerNamespaceManagerPrivate *priv;
 	const char *str;
+	gchar *prefix_copy, *ns_copy;
+	PrefixMap map;
 
 	g_return_if_fail (TRACKER_IS_NAMESPACE_MANAGER (self));
 	g_return_if_fail (prefix != NULL);
 	g_return_if_fail (ns != NULL);
 
 	priv = GET_PRIVATE (TRACKER_NAMESPACE_MANAGER (self));
+	g_return_if_fail (priv->sealed == FALSE);
 
 	if (strlen (prefix) > MAX_PREFIX_LENGTH) {
 		g_error ("Prefix is too long: max %i characters.", MAX_PREFIX_LENGTH);
@@ -240,20 +254,28 @@ tracker_namespace_manager_add_prefix (TrackerNamespaceManager *self,
 		return;
 	}
 
-	g_hash_table_insert (priv->prefix_to_namespace, g_strdup (prefix), g_strdup (ns));
+	prefix_copy = g_strdup (prefix);
+	ns_copy = g_strdup (ns);
+
+	g_hash_table_insert (priv->prefix_to_namespace, prefix_copy, ns_copy);
 	g_hash_table_insert (priv->namespace_to_prefix, g_strdup (ns), g_strdup (prefix));
+
+	map.prefix = prefix_copy;
+	map.uri = ns_copy;
+	map.uri_len = strlen (map.uri);
+	g_array_append_val (priv->prefix_map, map);
 }
 
 /**
  * tracker_namespace_manager_expand_uri:
- * @self: a #TrackerNamespaceManager
+ * @self: a `TrackerNamespaceManager`
  * @compact_uri: a URI or compact URI
  *
  * If @compact_uri begins with one of the prefixes known to this
- * #TrackerNamespaceManager, then the return value will be the
+ * `TrackerNamespaceManager`, then the return value will be the
  * expanded URI. Otherwise, a copy of @compact_uri will be returned.
  *
- * Returns: a newly-allocated string
+ * Returns: The possibly expanded URI in a newly-allocated string.
  */
 char *
 tracker_namespace_manager_expand_uri (TrackerNamespaceManager *self,
@@ -289,10 +311,57 @@ tracker_namespace_manager_expand_uri (TrackerNamespaceManager *self,
 }
 
 /**
- * tracker_namespace_manager_print_turtle:
- * @self: a #TrackerNamespaceManager
+ * tracker_namespace_manager_compress_uri:
+ * @self: a `TrackerNamespaceManager`
+ * @uri: a URI or compact URI
  *
- * Writes out all namespaces as Turtle @prefix statements.
+ * If @uri begins with one of the namespaces known to this
+ * `TrackerNamespaceManager`, then the return value will be the
+ * compressed URI. Otherwise, %NULL will be returned.
+ *
+ * Returns: (transfer full): (nullable): the compressed URI
+ *
+ * Since: 3.3
+ **/
+char *
+tracker_namespace_manager_compress_uri (TrackerNamespaceManager *self,
+                                        const char              *uri)
+{
+	TrackerNamespaceManagerPrivate *priv;
+	guint i;
+	int len;
+
+	g_return_val_if_fail (TRACKER_IS_NAMESPACE_MANAGER (self), NULL);
+	g_return_val_if_fail (uri != NULL, NULL);
+
+	priv = GET_PRIVATE (self);
+
+	len = strlen (uri);
+
+	for (i = 0; i < priv->prefix_map->len; i++) {
+		PrefixMap *map;
+		const char *suffix;
+
+		map = &g_array_index (priv->prefix_map, PrefixMap, i);
+
+		if (map->uri_len <= len &&
+		    map->uri[0] == uri[0] &&
+		    map->uri[map->uri_len - 1] == uri[map->uri_len - 1] &&
+		    strncmp (uri, map->uri, map->uri_len) == 0) {
+			suffix = &uri[map->uri_len];
+			return g_strconcat (map->prefix, ":", suffix, NULL);
+		}
+	}
+
+	return NULL;
+}
+
+/**
+ * tracker_namespace_manager_print_turtle:
+ * @self: a `TrackerNamespaceManager`
+ *
+ * Writes out all namespaces as `@prefix` statements in
+ * the [Turtle](https://www.w3.org/TR/turtle/) RDF format.
  *
  * Returns: a newly-allocated string
  */
@@ -321,7 +390,7 @@ tracker_namespace_manager_print_turtle (TrackerNamespaceManager *self)
 
 /**
  * tracker_namespace_manager_foreach:
- * @self: a #TrackerNamespaceManager
+ * @self: a `TrackerNamespaceManager`
  * @func: (scope call): the function to call for each prefix / URI pair
  * @user_data: user data to pass to the function
  *
@@ -335,4 +404,12 @@ tracker_namespace_manager_foreach (TrackerNamespaceManager *self,
 	TrackerNamespaceManagerPrivate *priv = GET_PRIVATE (self);
 
 	g_hash_table_foreach (priv->prefix_to_namespace, func, user_data);
-};
+}
+
+void
+tracker_namespace_manager_seal (TrackerNamespaceManager *self)
+{
+	TrackerNamespaceManagerPrivate *priv = GET_PRIVATE (self);
+
+	priv->sealed = TRUE;
+}

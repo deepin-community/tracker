@@ -1,5 +1,0 @@
-SELECT ?u {
-  SERVICE <dbus:%s> {
-    ?u nrl:indexed true
-  }
-}

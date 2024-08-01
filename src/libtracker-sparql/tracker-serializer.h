@@ -23,23 +23,21 @@
 #define TRACKER_SERIALIZER_H
 
 #include <libtracker-sparql/tracker-sparql.h>
+#include <libtracker-sparql/tracker-enums-private.h>
 
 #define TRACKER_TYPE_SERIALIZER (tracker_serializer_get_type())
 
 G_DECLARE_DERIVABLE_TYPE (TrackerSerializer,
                           tracker_serializer,
                           TRACKER, SERIALIZER,
-                          GInputStream);
-
-typedef enum
-{
-	TRACKER_SERIALIZER_FORMAT_JSON, /* application/sparql-results+json */
-	TRACKER_SERIALIZER_FORMAT_XML, /* application/sparql-results+xml */
-} TrackerSerializerFormat;
+                          GInputStream)
 
 GInputStream * tracker_serializer_new (TrackerSparqlCursor     *cursor,
+                                       TrackerNamespaceManager *namespaces,
                                        TrackerSerializerFormat  format);
 
 TrackerSparqlCursor * tracker_serializer_get_cursor (TrackerSerializer *serializer);
+
+TrackerNamespaceManager * tracker_serializer_get_namespaces (TrackerSerializer *serializer);
 
 #endif /* TRACKER_SERIALIZER_H */
