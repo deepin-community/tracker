@@ -1,6 +1,0 @@
-SELECT ?u {
-  SERVICE ?s {
-    ?u nrl:indexed true
-  }
-}
-VALUES ?s { 'dbus:%s' }

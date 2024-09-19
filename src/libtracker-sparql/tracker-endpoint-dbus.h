@@ -38,15 +38,9 @@ G_BEGIN_DECLS
 #define TRACKER_IS_ENDPOINT_DBUS_CLASS(c)  (G_TYPE_CHECK_CLASS_TYPE ((c),  TRACKER_TYPE_ENDPOINT_DBUS))
 #define TRACKER_ENDPOINT_DBUS_GET_CLASS(o) (G_TYPE_INSTANCE_GET_CLASS ((o), TRACKER_TYPE_ENDPOINT_DBUS, TrackerEndpointDBusClass))
 
-/**
- * TrackerEndpointDBus:
- *
- * The <structname>TrackerEndpointDBus</structname> object represents a public
- * connection to a #TrackerSparqlConnection on a DBus object path.
- */
 typedef struct _TrackerEndpointDBus TrackerEndpointDBus;
 
-G_DEFINE_AUTOPTR_CLEANUP_FUNC (TrackerEndpointDBus, g_object_unref);
+G_DEFINE_AUTOPTR_CLEANUP_FUNC (TrackerEndpointDBus, g_object_unref)
 
 TRACKER_AVAILABLE_IN_ALL
 GType tracker_endpoint_dbus_get_type (void) G_GNUC_CONST;

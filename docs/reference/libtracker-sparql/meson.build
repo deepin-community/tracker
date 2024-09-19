@@ -1,67 +1,175 @@
-version_xml = configure_file(input: 'version.xml.in',
-    output: 'version.xml',
-    configuration: conf)
+fs = import('fs')
 
-generated = custom_target('base-ontology-doc-generated',
-    output: 'gen-doc.stamp',
-    command: [ttl2xml,
-              '-d', join_paths(source_root, 'src/ontologies/'),
-              '-o', join_paths(meson.current_build_dir(), 'xml/'),
-              '-e', meson.current_source_dir()],
-    depends: ttl2xml,
-    depend_files: base_ontology,
-    build_by_default: true,
+if fs.exists('doc')
+  # Special case for tarballs, install the pre-generated docs
+  install_subdir('doc',
+    install_dir: datadir)
+  subdir_done()
+endif
+
+gidocgen_dep = dependency('gi-docgen', fallback: ['gi-docgen', 'dummy_dep'])
+gidocgen = find_program('gi-docgen')
+graphviz_dot = find_program('dot')
+xmlto = find_program('xmlto', required: false)
+
+ontology_introductions = [
+  'nie-introduction.md',
+  'nmm-introduction.md',
+  'nco-introduction.md',
+  'mfo-introduction.md',
+]
+
+base_ontology_docs = custom_target('ontology-docgen',
+    output: ['dc-ontology.md.in'],
+    command: [tracker_docgen,
+              '--md',
+              '--ontology-dir', meson.current_build_dir(), # Directory without ontology files
+              '--output-dir', meson.current_build_dir(),
+              '--introduction-dir', meson.current_source_dir(),
+              '--ontology-description-dir', join_paths(source_root, 'src/ontologies/')],
+    depends: tracker_docgen,
+    depend_files: [base_ontology, ontology_introductions],
 )
 
-example_files = [
-    'examples/ontologies/defining-cardinality-1.rq', 'examples/ontologies/defining-cardinality-2.txt',
-    'examples/ontologies/defining-cardinality-3.rq', 'examples/ontologies/defining-classes-1.txt',
-    'examples/ontologies/defining-classes-2.txt', 'examples/ontologies/defining-classes-3.rq',
-    'examples/ontologies/defining-fts-indexes-1.txt', 'examples/ontologies/defining-fts-indexes-2.rq',
-    'examples/ontologies/defining-indexes-1.txt', 'examples/ontologies/defining-namespaces-1.txt',
-    'examples/ontologies/defining-properties-1.txt', 'examples/ontologies/defining-properties-2.txt',
-    'examples/ontologies/defining-properties-3.txt', 'examples/ontologies/defining-properties-4.rq',
-    'examples/ontologies/defining-uniqueness-1.txt', 'examples/ontologies/defining-uniqueness-2.rq',
-    'examples/ontologies/example.description', 'examples/ontologies/predefined-elements-1.txt',
-    'examples/ontologies/predefined-elements-2.rq',
-    'examples/readonly-example.c', 'examples/writeonly-example.c',
-    'examples/writeonly-with-blank-nodes-example.c',
+nepomuk_ontology_docs = custom_target('nepomuk-docgen',
+    output: ['nie-ontology.md.in'],
+    command: [tracker_docgen,
+              '--md',
+              '--ontology-dir', join_paths(source_root, 'src/ontologies/nepomuk'),
+              '--output-dir', meson.current_build_dir(),
+              '--introduction-dir', meson.current_source_dir()],
+    depends: tracker_docgen,
+    depend_files: [nepomuk, ontology_introductions],
+)
+
+generate_images = custom_target(
+  'doc-images',
+  output: 'rdfs:Resource-hierarchy.svg',
+  command: [
+    'generate-svgs.sh',
+    graphviz_dot,
+    meson.current_build_dir(),
+  ],
+  depends: [base_ontology_docs, nepomuk_ontology_docs])
+
+generated_ontology_files = [
+  'xsd-ontology.md.in',
+  'rdf-ontology.md.in',
+  'rdfs-ontology.md.in',
+  'nrl-ontology.md.in',
+  'dc-ontology.md.in',
+
+  'nie-ontology.md.in',
+  'nao-ontology.md.in',
+  'nco-ontology.md.in',
+  'nfo-ontology.md.in',
+  'nmm-ontology.md.in',
+  'mfo-ontology.md.in',
+  'tracker-ontology.md.in',
+  'slo-ontology.md.in',
+  'osinfo-ontology.md.in',
 ]
 
-image_files = [
-    'images/triple-graph-1.png',
-    'images/triple-graph-2.png',
-    'images/triple-graph-3.png',
+generated_targets = []
+generated_ontology_content = []
+
+foreach doc : generated_ontology_files
+  output_file = doc.replace('.in', '')
+  generated_ontology_content += output_file
+  generated_targets += custom_target(
+    output_file,
+    output: output_file,
+    command: [
+      'embed-files.py',
+      meson.current_build_dir() / doc,
+      meson.current_build_dir() / output_file,
+      meson.current_source_dir(),
+    ],
+    depends: [base_ontology_docs, nepomuk_ontology_docs, generate_images])
+endforeach
+
+generated_content_files = [
+  'overview.md.in',
+  'examples.md.in',
+  'tutorial.md.in',
+  'sandboxing.md.in',
 ]
 
-private_headers = [
-    'tracker-notifier-private.h',
-    'tracker-private.h',
-    'tracker-serializer.h',
-    'tracker-serializer-json.h',
-    'tracker-serializer-xml.h',
-    'direct',
-    'bus',
-    'remote',
+generated_content = []
+
+foreach doc : generated_content_files
+  output_file = doc.replace('.in', '')
+  generated_content += output_file
+  generated_targets += custom_target(
+    output_file,
+    input: doc,
+    output: output_file,
+    command: [
+      'embed-files.py',
+      '@INPUT@',
+      '@OUTPUT@',
+    ])
+endforeach
+
+content = [
+  'ontologies.md',
+  'sparql-functions.md',
+  'sparql-and-tracker.md',
+  'limits.md',
+  'performance.md',
+  'security.md',
+  'migrating-2to3.md',
 ]
 
-gnome.gtkdoc('libtracker-sparql',
-    src_dir: sparqlinc,
-    main_xml: 'libtracker-sparql-docs.xml',
-    scan_args: ['--ignore-headers=' + ' '.join(private_headers)],
-    content_files: [
-        'overview.xml',
-        'examples.xml',
-        'ontologies.xml',
-        'migrating-1to2.xml',
-        'sparql-and-tracker.xml',
-        'sparql-functions.xml',
-        example_files ],
-    html_assets: image_files,
-    gobject_typesfile: 'libtracker-sparql.types',
-    dependencies: tracker_sparql_dep,
-    fixxref_args: fixxref_args,
-    module_version: tracker_api_major,
-    install: true)
+# The TOML gi-docgen configuration wants a list of quoted file names.
+content_quoted = []
+foreach c : generated_content + content + generated_ontology_content
+  content_quoted += '"@0@"'.format(fs.name(c))
+endforeach
 
-subdir('examples')
+if xmlto.found()
+  cli_reference = custom_target(
+    'commandline.md',
+    input: 'commandline.md.in',
+    output: 'commandline.md',
+    command: [
+      'generate-cli-reference.py',
+      '--template', '@INPUT@',
+      '--output', '@OUTPUT@',
+      '--man-pages', manpage_files,
+    ]
+  )
+
+  generated_targets += cli_reference
+  content_quoted += '"@0@"'.format(fs.name(cli_reference.full_path()))
+endif
+
+gidocgen_conf = configuration_data()
+gidocgen_conf.set('version', meson.project_version())
+gidocgen_conf.set('content', ','.join(content_quoted))
+
+gidocgen_toml = configure_file(
+  input: 'tracker-sparql.toml.in',
+  output: 'tracker-sparql.toml',
+  configuration: gidocgen_conf)
+
+reference = custom_target(
+  'docgen',
+  input: [ gidocgen_toml, tracker_sparql_gir[0] ],
+  output: 'doc',
+  command: [
+    gidocgen,
+    'generate',
+    '--quiet',
+    '--config=@INPUT0@',
+    '--output-dir=@OUTPUT@',
+    '--content-dir=@0@'.format(meson.current_source_dir()),
+    '--content-dir=@0@'.format(meson.current_build_dir()),
+    '@INPUT1@',
+  ],
+  depends: [tracker_sparql_gir[0], generated_targets],
+  depend_files: [content])
+
+docs_name = 'Tracker-3.0'
+meson.add_install_script('install-devhelp.sh', docs_name, reference)
+meson.add_dist_script('dist-docs.sh', docs_name, reference.full_path())

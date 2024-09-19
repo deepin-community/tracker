@@ -22,9 +22,10 @@
 #define __TRACKER_LOCAL_CONNECTION_H__
 
 #include <libtracker-sparql/tracker-sparql.h>
-#include <libtracker-data/tracker-data-manager.h>
+#include <libtracker-sparql/core/tracker-data.h>
 
 #include "tracker-direct-batch.h"
+#include "tracker-direct-statement.h"
 
 #define TRACKER_TYPE_DIRECT_CONNECTION         (tracker_direct_connection_get_type())
 #define TRACKER_DIRECT_CONNECTION(o)           (G_TYPE_CHECK_INSTANCE_CAST ((o), TRACKER_TYPE_DIRECT_CONNECTION, TrackerDirectConnection))
@@ -48,10 +49,18 @@ struct _TrackerDirectConnection
 
 GType tracker_direct_connection_get_type (void) G_GNUC_CONST;
 
-TrackerDirectConnection *tracker_direct_connection_new (TrackerSparqlConnectionFlags   flags,
+TrackerSparqlConnection *tracker_direct_connection_new (TrackerSparqlConnectionFlags   flags,
                                                         GFile                         *store,
                                                         GFile                         *ontology,
                                                         GError                       **error);
+void tracker_direct_connection_new_async (TrackerSparqlConnectionFlags  flags,
+                                          GFile                        *store,
+                                          GFile                        *ontology,
+                                          GCancellable                 *cancellable,
+                                          GAsyncReadyCallback           cb,
+                                          gpointer                      user_data);
+TrackerSparqlConnection * tracker_direct_connection_new_finish (GAsyncResult  *res,
+                                                                GError       **error);
 
 TrackerDataManager *tracker_direct_connection_get_data_manager (TrackerDirectConnection *conn);
 
@@ -71,5 +80,43 @@ void tracker_direct_connection_update_batch_async (TrackerDirectConnection  *con
 gboolean tracker_direct_connection_update_batch_finish (TrackerDirectConnection  *conn,
                                                         GAsyncResult             *res,
                                                         GError                  **error);
+
+gboolean tracker_direct_connection_execute_update_statement (TrackerDirectConnection  *conn,
+                                                             TrackerSparqlStatement   *stmt,
+                                                             GHashTable               *parameters,
+                                                             GError                  **error);
+void tracker_direct_connection_execute_update_statement_async (TrackerDirectConnection  *conn,
+                                                               TrackerSparqlStatement   *stmt,
+                                                               GHashTable               *parameters,
+                                                               GCancellable             *cancellable,
+                                                               GAsyncReadyCallback       callback,
+                                                               gpointer                  user_data);
+gboolean tracker_direct_connection_execute_update_statement_finish (TrackerDirectConnection  *conn,
+                                                                    GAsyncResult             *res,
+                                                                    GError                  **error);
+
+void tracker_direct_connection_execute_query_statement_async (TrackerDirectConnection *conn,
+                                                              TrackerSparqlStatement  *stmt,
+                                                              GHashTable              *parameters,
+                                                              GCancellable            *cancellable,
+                                                              GAsyncReadyCallback      callback,
+                                                              gpointer                 user_data);
+
+TrackerSparqlCursor * tracker_direct_connection_execute_query_statement_finish (TrackerDirectConnection  *conn,
+                                                                                GAsyncResult             *res,
+                                                                                GError                  **error);
+
+void tracker_direct_connection_execute_serialize_statement_async (TrackerDirectConnection *conn,
+                                                                  TrackerSparqlStatement  *stmt,
+                                                                  GHashTable              *parameters,
+                                                                  TrackerSerializeFlags    flags,
+                                                                  TrackerRdfFormat         format,
+                                                                  GCancellable            *cancellable,
+                                                                  GAsyncReadyCallback      callback,
+                                                                  gpointer                 user_data);
+
+GInputStream * tracker_direct_connection_execute_serialize_statement_finish (TrackerDirectConnection  *conn,
+                                                                             GAsyncResult             *res,
+                                                                             GError                  **error);
 
 #endif /* __TRACKER_LOCAL_CONNECTION_H__ */

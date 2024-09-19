@@ -19,21 +19,75 @@
  * Author: Carlos Garnacho <carlosg@gnome.org>
  */
 
+/**
+ * TrackerEndpointHttp:
+ *
+ * `TrackerEndpointHttp` makes the RDF data in a [class@Tracker.SparqlConnection]
+ * accessible to other hosts via HTTP.
+ *
+ * This object is a [class@Tracker.Endpoint] subclass that exports
+ * a [class@Tracker.SparqlConnection] so its RDF data is accessible via HTTP
+ * requests on the given port. This endpoint implementation is compliant
+ * with the [SPARQL protocol specifications](https://www.w3.org/TR/2013/REC-sparql11-protocol-20130321/)
+ * and may interoperate with other implementations.
+ *
+ * ```c
+ * // This host has "example.local" hostname
+ * endpoint = tracker_endpoint_http_new (sparql_connection,
+ *                                       8080,
+ *                                       tls_certificate,
+ *                                       NULL,
+ *                                       &error);
+ *
+ * // From another host
+ * connection = tracker_sparql_connection_remote_new ("http://example.local:8080/sparql");
+ * ```
+ *
+ * Access to HTTP endpoints may be managed via the
+ * [signal@Tracker.EndpointHttp::block-remote-address] signal, the boolean
+ * return value expressing whether the connection is blocked or not.
+ * Inspection of the requester address is left up to the user. The
+ * default value allows all requests independently of their provenance,
+ * users are encouraged to add a handler.
+ *
+ * If the provided [class@Gio.TlsCertificate] is %NULL, the endpoint will allow
+ * plain HTTP connections. Users are encouraged to provide a certificate
+ * in order to use HTTPS.
+ *
+ * As a security measure, and in compliance specifications,
+ * the HTTP endpoint does not handle database updates or modifications in any
+ * way. The database content is considered to be entirely managed by the
+ * process that creates the HTTP endpoint and owns the [class@Tracker.SparqlConnection].
+ *
+ * A `TrackerEndpointHttp` may be created on a different thread/main
+ * context from the one that created [class@Tracker.SparqlConnection].
+ *
+ * Since: 3.1
+ */
+
 #include "config.h"
 
 #include "tracker-endpoint-http.h"
+
+#include "tracker-deserializer-resource.h"
 #include "tracker-serializer.h"
 #include "tracker-private.h"
 
-#include <libsoup/soup.h>
+#include "remote/tracker-http.h"
 
-#define SERVER_HEADER "Tracker " PACKAGE_VERSION " (https://gitlab.gnome.org/GNOME/tracker/issues/)"
+const gchar *supported_formats[] = {
+	"http://www.w3.org/ns/formats/SPARQL_Results_JSON",
+	"http://www.w3.org/ns/formats/SPARQL_Results_XML",
+	"http://www.w3.org/ns/formats/Turtle",
+	"http://www.w3.org/ns/formats/TriG",
+	"http://www.w3.org/ns/formats/JSON-LD",
+};
 
-typedef struct _TrackerEndpointHttp TrackerEndpointHttp;
+G_STATIC_ASSERT (G_N_ELEMENTS (supported_formats) == TRACKER_N_SERIALIZER_FORMATS);
 
 struct _TrackerEndpointHttp {
 	TrackerEndpoint parent_instance;
-	SoupServer *server;
+	TrackerHttpServer *server;
 	GTlsCertificate *certificate;
 	guint port;
 	GCancellable *cancellable;
@@ -41,7 +95,7 @@ struct _TrackerEndpointHttp {
 
 typedef struct {
 	TrackerEndpoint *endpoint;
-	SoupMessage *message;
+	TrackerHttpRequest *request;
 	GInputStream *istream;
 	GTask *task;
 	TrackerSerializerFormat format;
@@ -59,9 +113,6 @@ enum {
 	N_PROPS
 };
 
-#define XML_TYPE "application/sparql-results+xml"
-#define JSON_TYPE "application/sparql-results+json"
-
 static GParamSpec *props[N_PROPS];
 static guint signals[N_SIGNALS];
 
@@ -78,172 +129,191 @@ request_free (Request *request)
 }
 
 static void
-handle_request_in_thread (GTask        *task,
-                          gpointer      source_object,
-                          gpointer      task_data,
-                          GCancellable *cancellable)
-{
-	Request *request = task_data;
-	gchar *buffer[1000];
-	gboolean finished = FALSE;
-	SoupMessageBody *message_body;
-	GError *error = NULL;
-	gssize count;
-
-	g_object_get (request->message,
-	              "response-body", &message_body,
-	              NULL);
-
-	while (!finished) {
-		count = g_input_stream_read (request->istream,
-		                             buffer, sizeof (buffer),
-		                             cancellable, &error);
-		if (count == -1) {
-			g_task_return_error (task, error);
-			break;
-		} else if (count < sizeof (buffer)) {
-			finished = TRUE;
-		}
-
-		soup_message_body_append (message_body,
-		                          SOUP_MEMORY_COPY,
-		                          buffer, count);
-	}
-
-	g_input_stream_close (request->istream, cancellable, NULL);
-	soup_message_body_complete (message_body);
-	g_task_return_boolean (task, TRUE);
-}
-
-static void
-request_finished_cb (GObject      *object,
-                     GAsyncResult *result,
-                     gpointer      user_data)
-{
-	Request *request = user_data;
-	TrackerEndpointHttp *endpoint_http;
-	GError *error = NULL;
-
-	endpoint_http = TRACKER_ENDPOINT_HTTP (request->endpoint);
-
-	if (!g_task_propagate_boolean (G_TASK (result), &error)) {
-		soup_message_set_status_full (request->message, 500,
-		                              error ? error->message :
-		                              "No error message");
-		g_clear_error (&error);
-	} else {
-		soup_message_set_status (request->message, 200);
-	}
-
-	soup_server_unpause_message (endpoint_http->server, request->message);
-	request_free (request);
-}
-
-static void
 query_async_cb (GObject      *object,
                 GAsyncResult *result,
                 gpointer      user_data)
 {
 	TrackerEndpointHttp *endpoint_http;
 	TrackerSparqlCursor *cursor;
+	TrackerSparqlConnection *conn;
 	Request *request = user_data;
+	GInputStream *stream;
 	GError *error = NULL;
 
 	endpoint_http = TRACKER_ENDPOINT_HTTP (request->endpoint);
 	cursor = tracker_sparql_connection_query_finish (TRACKER_SPARQL_CONNECTION (object),
 	                                                 result, &error);
 	if (error) {
-		soup_message_set_status_full (request->message, 500, error->message);
-		soup_server_unpause_message (endpoint_http->server, request->message);
+		tracker_http_server_error (endpoint_http->server,
+		                           request->request,
+		                           400,
+		                           error->message);
 		request_free (request);
+		g_error_free (error);
 		return;
 	}
 
-	request->istream = tracker_serializer_new (cursor, request->format);
-	request->task = g_task_new (endpoint_http, endpoint_http->cancellable,
-	                            request_finished_cb, request);
-	g_task_set_task_data (request->task, request, NULL);
-
-	g_task_run_in_thread (request->task, handle_request_in_thread);
+	conn = tracker_sparql_cursor_get_connection (cursor);
+	stream = tracker_serializer_new (cursor,
+	                                 tracker_sparql_connection_get_namespace_manager (conn),
+	                                 request->format);
+	/* Consumes the input stream */
+	tracker_http_server_response (endpoint_http->server,
+	                              request->request,
+	                              request->format,
+	                              stream);
+	request_free (request);
 }
 
 static gboolean
-pick_format (SoupMessage             *message,
+pick_format (guint                    formats,
              TrackerSerializerFormat *format)
 {
-	SoupMessageHeaders *request_headers, *response_headers;
+	TrackerSerializerFormat i;
+	const gchar *test_format;
 
-	g_object_get (message,
-	              "request-headers", &request_headers,
-	              "response-headers", &response_headers,
-	              NULL);
+	test_format = g_getenv ("TRACKER_TEST_PREFERRED_CURSOR_FORMAT");
+	if (test_format && g_ascii_isdigit (*test_format)) {
+		int f = atoi (test_format);
 
-	if (soup_message_headers_header_contains (request_headers, "Accept", JSON_TYPE)) {
-		soup_message_headers_set_content_type (response_headers, JSON_TYPE, NULL);
-		*format = TRACKER_SERIALIZER_FORMAT_JSON;
-		return TRUE;
-	} else if (soup_message_headers_header_contains (request_headers, "Accept", XML_TYPE)) {
-		soup_message_headers_set_content_type (response_headers, XML_TYPE, NULL);
-		*format = TRACKER_SERIALIZER_FORMAT_XML;
-		return TRUE;
-	} else {
-		return FALSE;
+		if ((formats & (1 << f)) != 0) {
+			*format = f;
+			return TRUE;
+		}
+	}
+
+	for (i = 0; i < TRACKER_N_SERIALIZER_FORMATS; i++) {
+		if ((formats & (1 << i)) != 0) {
+			*format = i;
+			return TRUE;
+		}
 	}
 
 	return FALSE;
 }
 
 static void
-server_callback (SoupServer        *server,
-                 SoupMessage       *message,
-                 const char        *path,
-                 GHashTable        *query,
-                 SoupClientContext *client,
-                 gpointer           user_data)
+add_supported_formats (TrackerResource *resource,
+                       const gchar     *property)
+{
+	gint i;
+
+	for (i = 0; i < TRACKER_N_SERIALIZER_FORMATS; i++)
+		tracker_resource_add_uri (resource, property, supported_formats[i]);
+}
+
+static TrackerResource *
+create_service_description (TrackerEndpointHttp      *endpoint,
+                            TrackerNamespaceManager **manager)
+{
+	TrackerResource *resource;
+
+	*manager = tracker_namespace_manager_new ();
+	tracker_namespace_manager_add_prefix (*manager, "rdf",
+	                                      "http://www.w3.org/1999/02/22-rdf-syntax-ns#");
+	tracker_namespace_manager_add_prefix (*manager, "sd",
+	                                      "http://www.w3.org/ns/sparql-service-description#");
+	tracker_namespace_manager_add_prefix (*manager, "format",
+	                                      "http://www.w3.org/ns/formats/");
+
+	resource = tracker_resource_new (NULL);
+	tracker_resource_set_uri (resource, "rdf:type", "sd:Service");
+	/* tracker_resource_set_uri (resource, "sd:endpoint", endpoint_uri); */
+	tracker_resource_set_uri (resource, "sd:supportedLanguage", "sd:SPARQL11Query");
+
+	tracker_resource_add_uri (resource, "sd:feature", "sd:EmptyGraphs");
+	tracker_resource_add_uri (resource, "sd:feature", "sd:BasicFederatedQuery");
+	tracker_resource_add_uri (resource, "sd:feature", "sd:UnionDefaultGraph");
+
+	add_supported_formats (resource, "sd:resultFormat");
+	add_supported_formats (resource, "sd:inputFormat");
+
+	return resource;
+}
+
+static void
+http_server_request_cb (TrackerHttpServer  *server,
+                        GSocketAddress     *remote_address,
+                        const gchar        *path,
+                        GHashTable         *params,
+                        guint               formats,
+                        TrackerHttpRequest *request,
+                        gpointer            user_data)
 {
 	TrackerEndpoint *endpoint = user_data;
 	TrackerSparqlConnection *conn;
 	TrackerSerializerFormat format;
-	GSocketAddress *remote_address;
 	gboolean block = FALSE;
-	const gchar *sparql;
-	Request *request;
+	const gchar *sparql = NULL;
+	Request *data;
 
-	remote_address = soup_client_context_get_remote_address (client);
 	if (remote_address) {
 		g_signal_emit (endpoint, signals[BLOCK_REMOTE_ADDRESS], 0,
 		               remote_address, &block);
 	}
 
 	if (block) {
-		soup_message_set_status_full (message, 500, "Remote address disallowed");
+		tracker_http_server_error (server, request, 400,
+		                           "Remote address disallowed");
 		return;
 	}
 
-	sparql = g_hash_table_lookup (query, "query");
-	if (!sparql) {
-		soup_message_set_status_full (message, 500, "No query given");
-		return;
+	if (params)
+		sparql = g_hash_table_lookup (params, "query");
+
+	if (sparql) {
+		gchar *query;
+
+		if (!pick_format (formats, &format)) {
+			tracker_http_server_error (server, request, 400,
+			                           "No recognized accepted formats");
+			return;
+		}
+
+		data = g_new0 (Request, 1);
+		data->endpoint = endpoint;
+		data->request = request;
+		data->format = format;
+
+		query = g_strdup (sparql);
+		tracker_endpoint_rewrite_query (TRACKER_ENDPOINT (endpoint), &query);
+
+		conn = tracker_endpoint_get_sparql_connection (endpoint);
+		tracker_sparql_connection_query_async (conn,
+		                                       query,
+		                                       NULL,
+		                                       query_async_cb,
+		                                       data);
+		g_free (query);
+	} else {
+		TrackerNamespaceManager *namespaces;
+		TrackerResource *description;
+		TrackerSparqlCursor *deserializer;
+		GInputStream *serializer;
+
+		if (!pick_format (formats, &format))
+			format = TRACKER_SERIALIZER_FORMAT_TTL;
+
+		/* Requests to with no query return a RDF description
+		 * about the HTTP endpoint.
+		 */
+		description = create_service_description (TRACKER_ENDPOINT_HTTP (endpoint),
+		                                          &namespaces);
+
+		deserializer = tracker_deserializer_resource_new (description,
+		                                                  namespaces, NULL);
+		serializer = tracker_serializer_new (TRACKER_SPARQL_CURSOR (deserializer),
+		                                     namespaces, format);
+		g_object_unref (deserializer);
+		g_object_unref (description);
+		g_object_unref (namespaces);
+
+		/* Consumes the serializer */
+		tracker_http_server_response (server,
+		                              request,
+		                              format,
+		                              serializer);
 	}
-
-	if (!pick_format (message, &format)) {
-		soup_message_set_status_full (message, 500, "No recognized accepted formats");
-		return;
-	}
-
-	request = g_new0 (Request, 1);
-	request->endpoint = endpoint;
-	request->message = message;
-	request->format = format;
-
-	conn = tracker_endpoint_get_sparql_connection (endpoint);
-	tracker_sparql_connection_query_async (conn,
-	                                       sparql,
-	                                       NULL,
-	                                       query_async_cb,
-	                                       request);
-
-	soup_server_pause_message (server, message);
 }
 
 static gboolean
@@ -255,18 +325,16 @@ tracker_endpoint_http_initable_init (GInitable     *initable,
 	TrackerEndpointHttp *endpoint_http = TRACKER_ENDPOINT_HTTP (endpoint);
 
 	endpoint_http->server =
-		soup_server_new ("tls-certificate", endpoint_http->certificate,
-		                 "server-header", SERVER_HEADER,
-		                 NULL);
-	soup_server_add_handler (endpoint_http->server,
-	                         "/sparql",
-	                         server_callback,
-	                         initable,
-	                         NULL);
+		tracker_http_server_new (endpoint_http->port,
+		                         endpoint_http->certificate,
+		                         cancellable,
+		                         error);
+	if (!endpoint_http->server)
+		return FALSE;
 
-	return soup_server_listen_all (endpoint_http->server,
-	                               endpoint_http->port,
-	                               0, error);
+	g_signal_connect (endpoint_http->server, "request",
+	                  G_CALLBACK (http_server_request_cb), initable);
+	return TRUE;
 }
 
 static void
@@ -342,7 +410,7 @@ tracker_endpoint_http_class_init (TrackerEndpointHttpClass *klass)
 
 	/**
 	 * TrackerEndpointHttp::block-remote-address:
-	 * @self: The #TrackerNotifier
+	 * @self: The `TrackerEndpointHttp`
 	 * @address: The socket address of the remote connection
 	 *
 	 * Allows control over the connections stablished. The given
@@ -358,6 +426,11 @@ tracker_endpoint_http_class_init (TrackerEndpointHttpClass *klass)
 		              g_signal_accumulator_first_wins, NULL, NULL,
 		              G_TYPE_BOOLEAN, 1, G_TYPE_SOCKET_ADDRESS);
 
+	/**
+	 * TrackerEndpointHttp:http-port:
+	 *
+	 * HTTP port used to listen requests.
+	 */
 	props[PROP_HTTP_PORT] =
 		g_param_spec_uint ("http-port",
 		                   "HTTP Port",
@@ -365,6 +438,11 @@ tracker_endpoint_http_class_init (TrackerEndpointHttpClass *klass)
 		                   0, G_MAXUINT,
 		                   8080,
 		                   G_PARAM_READWRITE | G_PARAM_CONSTRUCT_ONLY);
+	/**
+	 * TrackerEndpointHttp:http-certificate:
+	 *
+	 * [class@Gio.TlsCertificate] to encrypt the communication.
+	 */
 	props[PROP_HTTP_CERTIFICATE] =
 		g_param_spec_object ("http-certificate",
 		                     "HTTP certificate",
@@ -383,17 +461,17 @@ tracker_endpoint_http_init (TrackerEndpointHttp *endpoint)
 
 /**
  * tracker_endpoint_http_new:
- * @sparql_connection: a #TrackerSparqlConnection
- * @port: HTTP port to listen to
- * @certificate: (nullable): certificate to use for encription, or %NULL
- * @cancellable: (nullable): a #GCancellable, or %NULL
- * @error: pointer to a #GError
+ * @sparql_connection: The [class@Tracker.SparqlConnection] being made public
+ * @port: HTTP port to handle incoming requests
+ * @certificate: (nullable): Optional [type@Gio.TlsCertificate] to use for encription
+ * @cancellable: (nullable): Optional [type@Gio.Cancellable]
+ * @error: Error location
  *
  * Sets up a Tracker endpoint to listen via HTTP, in the given @port.
  * If @certificate is not %NULL, HTTPS may be used to connect to the
  * endpoint.
  *
- * Returns: (transfer full): a #TrackerEndpointDBus object.
+ * Returns: (transfer full): a `TrackerEndpointHttp` object.
  *
  * Since: 3.1
  **/
@@ -410,6 +488,7 @@ tracker_endpoint_http_new (TrackerSparqlConnection  *sparql_connection,
 	g_return_val_if_fail (!error || !*error, NULL);
 
 	return g_initable_new (TRACKER_TYPE_ENDPOINT_HTTP, cancellable, error,
+	                       "readonly", TRUE,
 	                       "http-port", port,
 	                       "sparql-connection", sparql_connection,
 	                       "http-certificate", certificate,

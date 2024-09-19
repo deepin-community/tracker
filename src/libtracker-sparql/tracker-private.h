@@ -23,8 +23,8 @@
 #include <libtracker-sparql/tracker-version-generated.h>
 #include <libtracker-sparql/tracker-cursor.h>
 #include <libtracker-sparql/tracker-endpoint-dbus.h>
-
-typedef struct _TrackerSparqlConnectionClass TrackerSparqlConnectionClass;
+#include <libtracker-sparql/tracker-enums-private.h>
+#include <libtracker-sparql/tracker-deserializer.h>
 
 struct _TrackerSparqlConnectionClass
 {
@@ -80,6 +80,10 @@ struct _TrackerSparqlConnectionClass
                                                       const gchar              *sparql,
                                                       GCancellable             *cancellable,
                                                       GError                  **error);
+        TrackerSparqlStatement * (* update_statement) (TrackerSparqlConnection  *connection,
+                                                       const gchar              *sparql,
+                                                       GCancellable             *cancellable,
+                                                       GError                  **error);
 	TrackerNotifier * (* create_notifier) (TrackerSparqlConnection *connection);
 
 	void (* close) (TrackerSparqlConnection *connection);
@@ -112,9 +116,32 @@ struct _TrackerSparqlConnectionClass
 	                                  const gchar              *dbus_path,
 	                                  gchar                   **name,
 	                                  gchar                   **path);
-};
 
-typedef struct _TrackerSparqlCursorClass TrackerSparqlCursorClass;
+	void (* serialize_async) (TrackerSparqlConnection  *connection,
+	                          TrackerSerializeFlags     flags,
+	                          TrackerRdfFormat          format,
+	                          const gchar              *query,
+	                          GCancellable             *cancellable,
+	                          GAsyncReadyCallback      callback,
+	                          gpointer                 user_data);
+	GInputStream * (* serialize_finish) (TrackerSparqlConnection  *connection,
+	                                     GAsyncResult             *res,
+	                                     GError                  **error);
+	void (* deserialize_async) (TrackerSparqlConnection *connection,
+	                            TrackerDeserializeFlags  flags,
+	                            TrackerRdfFormat         format,
+	                            const gchar             *default_graph,
+	                            GInputStream            *stream,
+	                            GCancellable            *cancellable,
+	                            GAsyncReadyCallback      callback,
+	                            gpointer                 user_data);
+	gboolean (* deserialize_finish) (TrackerSparqlConnection  *connection,
+	                                 GAsyncResult             *res,
+	                                 GError                  **error);
+	void (* map_connection) (TrackerSparqlConnection  *connection,
+	                         const gchar              *handle_name,
+	                         TrackerSparqlConnection  *service_connection);
+};
 
 struct _TrackerSparqlCursorClass
 {
@@ -124,9 +151,10 @@ struct _TrackerSparqlCursorClass
 	                                           gint                 column);
         const gchar* (* get_variable_name) (TrackerSparqlCursor *cursor,
                                             gint                 column);
-	const gchar* (* get_string) (TrackerSparqlCursor *cursor,
-	                             gint                 column,
-	                             glong               *length);
+	const gchar* (* get_string) (TrackerSparqlCursor  *cursor,
+	                             gint                  column,
+	                             const gchar         **langtag,
+	                             glong                *length);
         gboolean (* next) (TrackerSparqlCursor  *cursor,
                            GCancellable         *cancellable,
                            GError              **error);
@@ -145,18 +173,16 @@ struct _TrackerSparqlCursorClass
                                 gint                 column);
         gboolean (* get_boolean) (TrackerSparqlCursor *cursor,
                                   gint                 column);
+        GDateTime* (* get_datetime) (TrackerSparqlCursor *cursor,
+                                     gint                 column);
         gboolean (* is_bound) (TrackerSparqlCursor *cursor,
                                gint                 column);
         gint (* get_n_columns) (TrackerSparqlCursor *cursor);
 };
 
-typedef struct _TrackerEndpointClass TrackerEndpointClass;
-
 struct _TrackerEndpointClass {
 	GObjectClass parent_class;
 };
-
-typedef struct _TrackerEndpointDBus TrackerEndpointDBus;
 
 struct _TrackerEndpointDBus {
 	TrackerEndpoint parent_instance;
@@ -170,20 +196,8 @@ struct _TrackerEndpointDBus {
 
 typedef struct _TrackerEndpointDBusClass TrackerEndpointDBusClass;
 
-typedef enum {
-	TRACKER_OPERATION_TYPE_SELECT,
-	TRACKER_OPERATION_TYPE_UPDATE,
-} TrackerOperationType;
-
 struct _TrackerEndpointDBusClass {
 	struct _TrackerEndpointClass parent_class;
-
-	gboolean (* forbid_operation) (TrackerEndpointDBus   *endpoint_dbus,
-	                               GDBusMethodInvocation *invocation,
-	                               TrackerOperationType   operation_type);
-	gboolean (* filter_graph) (TrackerEndpointDBus *endpoint_dbus,
-	                           const gchar         *graph_name);
-	gchar * (* add_prologue) (TrackerEndpointDBus *endpoint_dbus);
 };
 
 typedef struct _TrackerEndpointHttpClass TrackerEndpointHttpClass;
@@ -192,14 +206,10 @@ struct _TrackerEndpointHttpClass {
 	struct _TrackerEndpointClass parent_class;
 };
 
-typedef struct _TrackerResourceClass TrackerResourceClass;
-
 struct _TrackerResourceClass
 {
 	GObjectClass parent_class;
 };
-
-typedef struct _TrackerSparqlStatementClass TrackerSparqlStatementClass;
 
 struct _TrackerSparqlStatementClass
 {
@@ -217,6 +227,13 @@ struct _TrackerSparqlStatementClass
         void (* bind_double) (TrackerSparqlStatement *stmt,
                               const gchar            *name,
                               gdouble                 value);
+        void (* bind_datetime) (TrackerSparqlStatement *stmt,
+                                const gchar            *name,
+                                GDateTime              *value);
+	void (* bind_langstring) (TrackerSparqlStatement *stmt,
+	                          const gchar            *name,
+	                          const gchar            *value,
+	                          const gchar            *langtag);
 
         TrackerSparqlCursor * (* execute) (TrackerSparqlStatement  *stmt,
                                            GCancellable            *cancellable,
@@ -229,9 +246,28 @@ struct _TrackerSparqlStatementClass
                                                   GAsyncResult            *res,
                                                   GError                 **error);
 	void (* clear_bindings) (TrackerSparqlStatement *stmt);
-};
 
-typedef struct _TrackerNotifierClass TrackerNotifierClass;
+        void (* serialize_async) (TrackerSparqlStatement *stmt,
+                                  TrackerSerializeFlags   flags,
+                                  TrackerRdfFormat        format,
+                                  GCancellable           *cancellable,
+                                  GAsyncReadyCallback     callback,
+                                  gpointer                user_data);
+        GInputStream * (* serialize_finish) (TrackerSparqlStatement  *stmt,
+                                             GAsyncResult            *res,
+                                             GError                 **error);
+
+        gboolean (* update) (TrackerSparqlStatement  *stmt,
+                             GCancellable            *cancellable,
+                             GError                 **error);
+        void (* update_async) (TrackerSparqlStatement *stmt,
+                               GCancellable           *cancellable,
+                               GAsyncReadyCallback     callback,
+                               gpointer                user_data);
+        gboolean (* update_finish) (TrackerSparqlStatement  *stmt,
+                                    GAsyncResult            *res,
+                                    GError                 **error);
+};
 
 struct _TrackerNotifierClass {
 	GObjectClass parent_class;
@@ -239,8 +275,6 @@ struct _TrackerNotifierClass {
 	void (* events) (TrackerNotifier *notifier,
 	                 const GPtrArray *events);
 };
-
-typedef struct _TrackerBatchClass TrackerBatchClass;
 
 struct _TrackerBatchClass {
 	GObjectClass parent_class;
@@ -250,6 +284,18 @@ struct _TrackerBatchClass {
 	void (* add_resource) (TrackerBatch    *batch,
 			       const gchar     *graph,
 			       TrackerResource *resource);
+	void (* add_statement) (TrackerBatch           *batch,
+	                        TrackerSparqlStatement *stmt,
+	                        guint                   n_values,
+	                        const gchar            *variable_names[],
+	                        const GValue            values[]);
+	void (* add_rdf) (TrackerBatch            *batch,
+	                  TrackerDeserializeFlags  flags,
+	                  TrackerRdfFormat         format,
+	                  const gchar             *default_graph,
+	                  GInputStream            *stream);
+	void (* add_dbus_fd) (TrackerBatch *batch,
+	                      GInputStream *istream);
 	gboolean (* execute) (TrackerBatch  *batch,
 			      GCancellable  *cancellable,
 			      GError       **error);
@@ -262,11 +308,29 @@ struct _TrackerBatchClass {
 				     GError       **error);
 };
 
-typedef struct _TrackerSerializerClass TrackerSerializerClass;
-
 struct _TrackerSerializerClass {
 	GInputStreamClass parent_class;
 };
+
+struct _TrackerDeserializerClass {
+	TrackerSparqlCursorClass parent_class;
+
+	gboolean (* get_parser_location) (TrackerDeserializer *deserializer,
+	                                  goffset             *line_no,
+	                                  goffset             *column_no);
+};
+
+struct _TrackerNamespaceManager {
+	GObject parent;
+};
+
+typedef struct {
+	GHashTableIter prop_iter;
+	TrackerResource *cur_resource;
+	const gchar *cur_prop;
+	GPtrArray *cur_values;
+	guint idx;
+} TrackerResourceIterator;
 
 gboolean
 tracker_sparql_connection_lookup_dbus_service (TrackerSparqlConnection  *connection,
@@ -277,5 +341,32 @@ tracker_sparql_connection_lookup_dbus_service (TrackerSparqlConnection  *connect
 void tracker_sparql_cursor_set_connection (TrackerSparqlCursor     *cursor,
                                            TrackerSparqlConnection *connection);
 GError * _translate_internal_error (GError *error);
+
+void tracker_namespace_manager_seal (TrackerNamespaceManager *namespaces);
+
+void tracker_resource_iterator_init (TrackerResourceIterator *iter,
+                                     TrackerResource         *resource);
+gboolean tracker_resource_iterator_next (TrackerResourceIterator  *iter,
+                                         const gchar             **property,
+                                         const GValue            **value);
+const gchar * tracker_resource_get_identifier_internal (TrackerResource *resource);
+gboolean tracker_resource_is_blank_node (TrackerResource *resource);
+
+void tracker_endpoint_rewrite_query (TrackerEndpoint  *endpoint,
+                                     gchar           **query);
+
+gboolean tracker_endpoint_is_graph_filtered (TrackerEndpoint *endpoint,
+                                             const gchar     *graph);
+
+TrackerSparqlStatement * tracker_endpoint_cache_select_sparql (TrackerEndpoint  *endpoint,
+                                                               const gchar      *sparql,
+                                                               GCancellable     *cancellable,
+                                                               GError          **error);
+
+void tracker_batch_add_dbus_fd (TrackerBatch *batch,
+                                GInputStream *istream);
+
+GBytes * tracker_sparql_make_langstring (const gchar *str,
+                                         const gchar *langtag);
 
 #endif /* __TRACKER_PRIVATE_H__ */

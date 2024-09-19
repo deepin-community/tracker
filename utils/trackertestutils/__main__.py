@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 #
 # Copyright (C) 2012-2013 Martyn Russell <martyn@lanedo.com>
 # Copyright (C) 2012      Sam Thursfield <sam.thursfield@codethink.co.uk>
@@ -40,12 +39,15 @@ import time
 from gi.repository import Gio
 from gi.repository import GLib
 
-from . import dconf
+from .dconf import DConfClient
 from . import helpers
 
-# Script
-script_name = 'tracker-sandbox'
+# Script synopsis
 script_about = "Tracker Sandbox developer tool."
+# Sets a more descriptive program name than __main__, permitting the
+# tracker-miners/run-uninstalled script to override it.
+prog = os.path.basename(getattr(sys, 'orig_argv', ['python'])[0])
+script_name = "tracker-sandbox" if prog.startswith("python") else prog
 
 default_store_location = '/tmp/tracker-sandbox'
 
@@ -90,6 +92,11 @@ class ExternalDBusSandbox():
 
     def get_session_bus_address(self):
         return self.session_bus_address
+
+    def get_dconf_client(self):
+        return DConfClient(
+            self.extra_env, self.get_session_bus_address(), host_dbus=True
+        )
 
     def stop(self):
         log.info("Not stopping D-Bus daemon managed by another process")
@@ -142,7 +149,7 @@ def create_sandbox(store_location, prefix=None, use_session_dirs=False,
 
 def config_set(sandbox, content_locations_recursive=None,
                content_locations_single=None, applications=False):
-    dconfclient = dconf.DConfClient(sandbox)
+    dconfclient = sandbox.get_dconf_client()
 
     if content_locations_recursive:
         log.debug("Using content locations: %s" %
@@ -198,7 +205,7 @@ def argument_parser():
         def __call__(self, parser, namespace, values, option_string=None):
             setattr(namespace, self.dest, os.path.abspath(os.path.expanduser(values)))
 
-    parser = argparse.ArgumentParser(description=script_about)
+    parser = argparse.ArgumentParser(prog=script_name, description=script_about)
     parser.add_argument('--dbus-config', metavar='FILE', action=expand_path,
                         help="use a custom D-Bus config file to locate the "
                              "Tracker daemons. This can be used to run Tracker "
@@ -361,7 +368,7 @@ def main():
     if args.debug_dbus and args.dbus_session_bus:
         log.warn("The --debug-dbus flag has no effect when --dbus-session-bus is used")
 
-    shell = os.environ.get('SHELL', '/bin/bash')
+    shell = os.environ.get('SHELL', 'bash')
 
     if args.prefix is None and args.dbus_config is None:
         parser.print_help()

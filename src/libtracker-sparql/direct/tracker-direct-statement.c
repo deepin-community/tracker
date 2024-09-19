@@ -18,9 +18,12 @@
  */
 
 #include "config.h"
+
 #include "tracker-direct-statement.h"
-#include "tracker-data.h"
 #include "tracker-private.h"
+
+#include <libtracker-sparql/core/tracker-data.h>
+#include <libtracker-sparql/tracker-serializer.h>
 
 typedef struct _TrackerDirectStatementPrivate TrackerDirectStatementPrivate;
 
@@ -44,28 +47,6 @@ tracker_direct_statement_finalize (GObject *object)
 	g_clear_object (&priv->sparql);
 
 	G_OBJECT_CLASS (tracker_direct_statement_parent_class)->finalize (object);
-}
-
-static void
-tracker_direct_statement_constructed (GObject *object)
-{
-	TrackerDirectStatementPrivate *priv;
-	TrackerSparqlConnection *conn;
-	gchar *sparql;
-
-	priv = tracker_direct_statement_get_instance_private (TRACKER_DIRECT_STATEMENT (object));
-
-	g_object_get (object,
-	              "sparql", &sparql,
-	              "connection", &conn,
-	              NULL);
-
-	priv->sparql = tracker_sparql_new (tracker_direct_connection_get_data_manager (TRACKER_DIRECT_CONNECTION (conn)),
-	                                   sparql);
-	g_object_unref (conn);
-	g_free (sparql);
-
-	G_OBJECT_CLASS (tracker_direct_statement_parent_class)->constructed (object);
 }
 
 static GValue *
@@ -130,6 +111,31 @@ tracker_direct_statement_bind_string (TrackerSparqlStatement *stmt,
 }
 
 static void
+tracker_direct_statement_bind_datetime (TrackerSparqlStatement *stmt,
+                                        const gchar            *name,
+                                        GDateTime              *datetime)
+{
+	GValue *gvalue;
+
+	gvalue = insert_value (TRACKER_DIRECT_STATEMENT (stmt), name, G_TYPE_DATE_TIME);
+	g_value_set_boxed (gvalue, datetime);
+}
+
+static void
+tracker_direct_statement_bind_langstring (TrackerSparqlStatement *stmt,
+                                          const gchar            *name,
+                                          const gchar            *value,
+                                          const gchar            *langtag)
+{
+	GValue *gvalue;
+	GBytes *bytes;
+
+	bytes = tracker_sparql_make_langstring (value, langtag);
+	gvalue = insert_value (TRACKER_DIRECT_STATEMENT (stmt), name, G_TYPE_BYTES);
+	g_value_take_boxed (gvalue, bytes);
+}
+
+static void
 tracker_direct_statement_clear_bindings (TrackerSparqlStatement *stmt)
 {
 	TrackerDirectStatementPrivate *priv;
@@ -154,28 +160,6 @@ tracker_direct_statement_execute (TrackerSparqlStatement  *stmt,
 		g_propagate_error (error, _translate_internal_error (inner_error));
 
 	return cursor;
-}
-
-static void
-execute_in_thread (GTask        *task,
-                   gpointer      object,
-                   gpointer      task_data,
-                   GCancellable *cancellable)
-{
-	TrackerDirectStatementPrivate *priv;
-	TrackerSparqlCursor *cursor;
-	GHashTable *values = task_data;
-	GError *error = NULL;
-
-	priv = tracker_direct_statement_get_instance_private (object);
-	cursor = tracker_sparql_execute_cursor (priv->sparql, values, &error);
-
-	if (error)
-		g_task_return_error (task, error);
-	else
-		g_task_return_pointer (task, cursor, g_object_unref);
-
-	g_object_unref (task);
 }
 
 static void
@@ -216,22 +200,50 @@ copy_values_deep (GHashTable *values)
 }
 
 static void
+execute_async_cb (GObject      *object,
+                  GAsyncResult *res,
+                  gpointer      user_data)
+{
+	TrackerDirectConnection *conn;
+	TrackerSparqlCursor *cursor;
+	GTask *task = user_data;
+	GError *error = NULL;
+
+	conn = TRACKER_DIRECT_CONNECTION (object);
+	cursor = tracker_direct_connection_execute_query_statement_finish (conn, res, &error);
+
+	if (cursor)
+		g_task_return_pointer (task, cursor, g_object_unref);
+	else
+		g_task_return_error (task, error);
+
+	g_object_unref (task);
+}
+
+static void
 tracker_direct_statement_execute_async (TrackerSparqlStatement *stmt,
                                         GCancellable           *cancellable,
                                         GAsyncReadyCallback     callback,
                                         gpointer                user_data)
 {
-	TrackerDirectStatementPrivate *priv;
+	TrackerDirectStatement *direct_stmt = TRACKER_DIRECT_STATEMENT (stmt);
+	TrackerDirectStatementPrivate *priv =
+		tracker_direct_statement_get_instance_private (direct_stmt);
+	TrackerDirectConnection *conn;
 	GHashTable *values;
 	GTask *task;
 
-	priv = tracker_direct_statement_get_instance_private (TRACKER_DIRECT_STATEMENT (stmt));
+	task = g_task_new (stmt, cancellable, callback, user_data);
 
 	values = copy_values_deep (priv->values);
-
-	task = g_task_new (stmt, cancellable, callback, user_data);
-	g_task_set_task_data (task, values, (GDestroyNotify) g_hash_table_unref);
-	g_task_run_in_thread (task, execute_in_thread);
+	conn = TRACKER_DIRECT_CONNECTION (tracker_sparql_statement_get_connection (stmt));
+	tracker_direct_connection_execute_query_statement_async (conn,
+	                                                         stmt,
+	                                                         values,
+	                                                         cancellable,
+	                                                         execute_async_cb,
+	                                                         task);
+	g_hash_table_unref (values);
 }
 
 static TrackerSparqlCursor *
@@ -239,19 +251,119 @@ tracker_direct_statement_execute_finish (TrackerSparqlStatement  *stmt,
                                          GAsyncResult            *res,
                                          GError                 **error)
 {
+	return g_task_propagate_pointer (G_TASK (res), error);
+}
+
+static void
+serialize_async_cb (GObject      *object,
+                    GAsyncResult *res,
+                    gpointer      user_data)
+{
 	TrackerDirectConnection *conn;
-	TrackerSparqlCursor *cursor;
-	GError *inner_error = NULL;
+	GInputStream *istream;
+	GTask *task = user_data;
+	GError *error = NULL;
 
-	cursor = g_task_propagate_pointer (G_TASK (res), &inner_error);
-	if (inner_error)
-		g_propagate_error (error, _translate_internal_error (inner_error));
+	conn = TRACKER_DIRECT_CONNECTION (object);
+	istream = tracker_direct_connection_execute_serialize_statement_finish (conn, res, &error);
 
-	g_object_get (stmt, "connection", &conn, NULL);
-	tracker_direct_connection_update_timestamp (conn);
-	g_object_unref (conn);
+	if (istream)
+		g_task_return_pointer (task, istream, g_object_unref);
+	else
+		g_task_return_error (task, error);
 
-	return cursor;
+	g_object_unref (task);
+}
+
+static void
+tracker_direct_statement_serialize_async (TrackerSparqlStatement *stmt,
+                                          TrackerSerializeFlags   flags,
+                                          TrackerRdfFormat        format,
+                                          GCancellable           *cancellable,
+                                          GAsyncReadyCallback     callback,
+                                          gpointer                user_data)
+{
+	TrackerDirectStatement *direct_stmt = TRACKER_DIRECT_STATEMENT (stmt);
+	TrackerDirectStatementPrivate *priv =
+		tracker_direct_statement_get_instance_private (direct_stmt);
+	TrackerDirectConnection *conn;
+	GHashTable *values;
+	GTask *task;
+
+	task = g_task_new (stmt, cancellable, callback, user_data);
+
+	values = copy_values_deep (priv->values);
+	conn = TRACKER_DIRECT_CONNECTION (tracker_sparql_statement_get_connection (stmt));
+	tracker_direct_connection_execute_serialize_statement_async (conn,
+	                                                             stmt,
+	                                                             values,
+	                                                             flags,
+	                                                             format,
+	                                                             cancellable,
+	                                                             serialize_async_cb,
+	                                                             task);
+	g_hash_table_unref (values);
+}
+
+static GInputStream *
+tracker_direct_statement_serialize_finish (TrackerSparqlStatement  *stmt,
+                                           GAsyncResult            *res,
+                                           GError                 **error)
+{
+	return g_task_propagate_pointer (G_TASK (res), error);
+}
+
+static gboolean
+tracker_direct_statement_update (TrackerSparqlStatement  *stmt,
+                                 GCancellable            *cancellable,
+                                 GError                 **error)
+{
+	TrackerSparqlConnection *conn;
+	TrackerDirectStatementPrivate *priv;
+
+	priv = tracker_direct_statement_get_instance_private (TRACKER_DIRECT_STATEMENT (stmt));
+	conn = tracker_sparql_statement_get_connection (stmt);
+
+	return tracker_direct_connection_execute_update_statement (TRACKER_DIRECT_CONNECTION (conn),
+	                                                           stmt,
+	                                                           priv->values,
+	                                                           error);
+}
+
+static void
+tracker_direct_statement_update_async (TrackerSparqlStatement *stmt,
+                                       GCancellable           *cancellable,
+                                       GAsyncReadyCallback     callback,
+                                       gpointer                user_data)
+{
+	TrackerDirectStatementPrivate *priv;
+	TrackerSparqlConnection *conn;
+	GHashTable *values;
+
+	priv = tracker_direct_statement_get_instance_private (TRACKER_DIRECT_STATEMENT (stmt));
+	conn = tracker_sparql_statement_get_connection (stmt);
+	values = copy_values_deep (priv->values);
+
+	tracker_direct_connection_execute_update_statement_async (TRACKER_DIRECT_CONNECTION (conn),
+	                                                          stmt,
+	                                                          values,
+	                                                          cancellable,
+	                                                          callback,
+	                                                          user_data);
+	g_hash_table_unref (values);
+}
+
+static gboolean
+tracker_direct_statement_update_finish (TrackerSparqlStatement  *stmt,
+                                        GAsyncResult            *res,
+                                        GError                 **error)
+{
+	TrackerSparqlConnection *conn;
+
+	conn = tracker_sparql_statement_get_connection (stmt);
+
+	return tracker_direct_connection_execute_update_statement_finish (TRACKER_DIRECT_CONNECTION (conn),
+	                                                                  res, error);
 }
 
 static void
@@ -261,16 +373,22 @@ tracker_direct_statement_class_init (TrackerDirectStatementClass *klass)
 	GObjectClass *object_class = (GObjectClass *) klass;
 
 	object_class->finalize = tracker_direct_statement_finalize;
-	object_class->constructed = tracker_direct_statement_constructed;
 
 	stmt_class->bind_int = tracker_direct_statement_bind_int;
 	stmt_class->bind_boolean = tracker_direct_statement_bind_boolean;
 	stmt_class->bind_double = tracker_direct_statement_bind_double;
 	stmt_class->bind_string = tracker_direct_statement_bind_string;
+	stmt_class->bind_datetime = tracker_direct_statement_bind_datetime;
+	stmt_class->bind_langstring = tracker_direct_statement_bind_langstring;
 	stmt_class->clear_bindings = tracker_direct_statement_clear_bindings;
 	stmt_class->execute = tracker_direct_statement_execute;
 	stmt_class->execute_async = tracker_direct_statement_execute_async;
 	stmt_class->execute_finish = tracker_direct_statement_execute_finish;
+	stmt_class->serialize_async = tracker_direct_statement_serialize_async;
+	stmt_class->serialize_finish = tracker_direct_statement_serialize_finish;
+	stmt_class->update = tracker_direct_statement_update;
+	stmt_class->update_async = tracker_direct_statement_update_async;
+	stmt_class->update_finish = tracker_direct_statement_update_finish;
 }
 
 static void
@@ -282,13 +400,86 @@ tracker_direct_statement_init (TrackerDirectStatement *stmt)
 	priv->values = create_values_ht ();
 }
 
+/* Executes with the update lock held */
+gboolean
+tracker_direct_statement_execute_update (TrackerSparqlStatement  *stmt,
+                                         GHashTable              *parameters,
+                                         GHashTable              *bnode_labels,
+                                         GError                 **error)
+{
+	TrackerDirectStatement *direct;
+	TrackerDirectStatementPrivate *priv;
+
+	direct = TRACKER_DIRECT_STATEMENT (stmt);
+	priv = tracker_direct_statement_get_instance_private (direct);
+
+	return tracker_sparql_execute_update (priv->sparql,
+	                                      parameters,
+	                                      bnode_labels,
+	                                      NULL,
+	                                      error);
+}
+
+TrackerSparql *
+tracker_direct_statement_get_sparql (TrackerSparqlStatement *stmt)
+{
+	TrackerDirectStatement *direct;
+	TrackerDirectStatementPrivate *priv;
+
+	direct = TRACKER_DIRECT_STATEMENT (stmt);
+	priv = tracker_direct_statement_get_instance_private (direct);
+
+	return priv->sparql;
+}
+
 TrackerDirectStatement *
 tracker_direct_statement_new (TrackerSparqlConnection  *conn,
                               const gchar              *sparql,
                               GError                  **error)
 {
-	return g_object_new (TRACKER_TYPE_DIRECT_STATEMENT,
-	                     "sparql", sparql,
-	                     "connection", conn,
-	                     NULL);
+	TrackerDirectStatement *direct;
+	TrackerDirectStatementPrivate *priv;
+	TrackerSparql *parser;
+
+	parser = tracker_sparql_new (tracker_direct_connection_get_data_manager (TRACKER_DIRECT_CONNECTION (conn)),
+	                             sparql,
+	                             error);
+	if (!parser)
+		return NULL;
+
+	direct = g_object_new (TRACKER_TYPE_DIRECT_STATEMENT,
+	                       "sparql", sparql,
+	                       "connection", conn,
+	                       NULL);
+
+	priv = tracker_direct_statement_get_instance_private (direct);
+	priv->sparql = parser;
+
+	return direct;
+}
+
+TrackerDirectStatement *
+tracker_direct_statement_new_update (TrackerSparqlConnection  *conn,
+                                     const gchar              *sparql,
+                                     GError                  **error)
+{
+	TrackerDirectStatement *direct;
+	TrackerDirectStatementPrivate *priv;
+	TrackerSparql *parser;
+
+	parser = tracker_sparql_new_update (tracker_direct_connection_get_data_manager (TRACKER_DIRECT_CONNECTION (conn)),
+	                                    sparql,
+	                                    error);
+	if (!parser)
+		return NULL;
+
+	direct = g_object_new (TRACKER_TYPE_DIRECT_STATEMENT,
+	                       "sparql", sparql,
+	                       "connection", conn,
+	                       NULL);
+
+	priv = tracker_direct_statement_get_instance_private (direct);
+	priv->sparql = parser;
+
+	return direct;
 }

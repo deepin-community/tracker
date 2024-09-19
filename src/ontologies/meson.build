@@ -2,6 +2,7 @@ base_ontology = files(
     '10-xsd.description',
     '10-xsd.ontology',
     '11-rdf.description',
+    '11-rdfs.description',
     '11-rdf.ontology',
     '12-nrl.description',
     '12-nrl.ontology',
@@ -31,6 +32,4 @@ nepomuk = files(
 )
 
 tracker_gresources = gnome.compile_resources('tracker_gresources', 'builtin-ontology.gresource.xml')
-
-install_data(nepomuk,
-    install_dir: join_paths(tracker_ontologies_dir, 'nepomuk'))
+tracker_nepomuk_gresources = gnome.compile_resources('tracker_nepomuk_gresources', 'nepomuk-ontology.gresource.xml')

@@ -18,28 +18,39 @@
  */
 
 /**
- * SECTION: tracker-notifier
- * @short_description: Listen to changes in the Tracker database
- * @include: libtracker-sparql/tracker-sparql.h
+ * TrackerNotifier:
  *
- * #TrackerNotifier is an object that receives notifications about
- * changes to the Tracker database. A #TrackerNotifier is created
- * through tracker_sparql_connection_create_notifier(), after the notifier
- * is created, events can be listened for by connecting to the
- * #TrackerNotifier::events signal. This object was added in Tracker 1.12.
+ * `TrackerNotifier` allows receiving notification on changes
+ * in the data stored by a [class@Tracker.SparqlConnection].
  *
- * # Known caveats # {#trackernotifier-caveats}
+ * This object may be created through [method@Tracker.SparqlConnection.create_notifier],
+ * events can then be listened for by connecting to the
+ * [signal@Tracker.Notifier::events] signal.
  *
- * * The %TRACKER_NOTIFIER_EVENT_DELETE events will be received after the
- *   resource has been deleted. At that time queries on those elements will
- *   not bring any metadata. Only the ID/URN obtained through the event
- *   remain meaningful.
- * * Notifications of files being moved across indexed folders will
- *   appear as %TRACKER_NOTIFIER_EVENT_UPDATE events, containing
- *   the new location (if requested). The older location is no longer
- *   known to Tracker, this may make tracking of elements in specific
- *   folders hard using solely the #TrackerNotifier/Tracker data
- *   available at event notification time.
+ * Not every change is notified, only RDF resources with a
+ * class that has the [nrl:notify](nrl-ontology.html#nrl:notify)
+ * property defined by the ontology will be notified upon changes.
+ *
+ * Database changes are communicated through [struct@Tracker.NotifierEvent] events on
+ * individual graph/resource pairs. The event type obtained through
+ * [method@Tracker.NotifierEvent.get_event_type] will determine the type of event.
+ * Insertion of new resources is notified through
+ * %TRACKER_NOTIFIER_EVENT_CREATE events, deletion of
+ * resources is notified through %TRACKER_NOTIFIER_EVENT_DELETE
+ * events, and changes on any property of the resource is notified
+ * through %TRACKER_NOTIFIER_EVENT_UPDATE events.
+ *
+ * The events happen in reaction to database changes, after a `TrackerNotifier`
+ * received an event of type %TRACKER_NOTIFIER_EVENT_DELETE, the resource will
+ * not exist anymore and only the information in the [struct@Tracker.NotifierEvent]
+ * will remain.
+ *
+ * Similarly, when receiving an event of type %TRACKER_NOTIFIER_EVENT_UPDATE,
+ * the resource will have already changed, so the data previous to the update is
+ * no longer available.
+ *
+ * The [signal@Tracker.Notifier::events] signal is emitted in the thread-default
+ * main context of the thread where the `TrackerNotifier` instance was created.
  */
 
 #include "config.h"
@@ -54,7 +65,6 @@
 
 typedef struct _TrackerNotifierPrivate TrackerNotifierPrivate;
 typedef struct _TrackerNotifierSubscription TrackerNotifierSubscription;
-typedef struct _TrackerNotifierEventCache TrackerNotifierEventCache;
 
 struct _TrackerNotifierSubscription {
 	GDBusConnection *connection;
@@ -72,15 +82,19 @@ struct _TrackerNotifierPrivate {
 	GCancellable *cancellable;
 	TrackerSparqlStatement *local_statement;
 	GAsyncQueue *queue;
+	GMainContext *main_context;
 	gint n_local_statement_slots;
-	gboolean querying;
+	guint querying : 1;
+	guint urn_query_disabled : 1;
 	GMutex mutex;
 };
 
 struct _TrackerNotifierEventCache {
-	TrackerNotifierSubscription *subscription;
+	gchar *service;
 	gchar *graph;
-	TrackerNotifier *notifier;
+	GWeakRef notifier;
+	GCancellable *cancellable;
+	TrackerSparqlStatement *stmt;
 	GSequence *sequence;
 	GSequenceIter *first;
 };
@@ -114,6 +128,12 @@ G_DEFINE_TYPE_WITH_CODE (TrackerNotifier, tracker_notifier, G_TYPE_OBJECT,
 
 static void tracker_notifier_query_extra_info (TrackerNotifier           *notifier,
                                                TrackerNotifierEventCache *cache);
+
+static gchar * get_service_name (TrackerNotifier             *notifier,
+                                 TrackerNotifierSubscription *subscription);
+
+static TrackerSparqlStatement * ensure_extra_info_statement (TrackerNotifier             *notifier,
+                                                             TrackerNotifierSubscription *subscription);
 
 static TrackerNotifierSubscription *
 tracker_notifier_subscription_new (TrackerNotifier *notifier,
@@ -192,12 +212,19 @@ _tracker_notifier_event_cache_new_full (TrackerNotifier             *notifier,
                                         const gchar                 *graph)
 {
 	TrackerNotifierEventCache *event_cache;
+	TrackerNotifierPrivate *priv;
+
+	priv = tracker_notifier_get_instance_private (notifier);
 
 	event_cache = g_new0 (TrackerNotifierEventCache, 1);
-	event_cache->notifier = g_object_ref (notifier);
-	event_cache->subscription = subscription;
+	g_weak_ref_init (&event_cache->notifier, notifier);
 	event_cache->graph = g_strdup (graph);
+	event_cache->cancellable = g_object_ref (priv->cancellable);
 	event_cache->sequence = g_sequence_new ((GDestroyNotify) tracker_notifier_event_unref);
+	event_cache->stmt = ensure_extra_info_statement (notifier, subscription);
+
+	if (subscription)
+		event_cache->service = get_service_name (notifier, subscription);
 
 	return event_cache;
 }
@@ -213,7 +240,9 @@ void
 _tracker_notifier_event_cache_free (TrackerNotifierEventCache *event_cache)
 {
 	g_sequence_free (event_cache->sequence);
-	g_object_unref (event_cache->notifier);
+	g_weak_ref_clear (&event_cache->notifier);
+	g_object_unref (event_cache->cancellable);
+	g_free (event_cache->service);
 	g_free (event_cache->graph);
 	g_free (event_cache);
 }
@@ -258,6 +287,12 @@ _tracker_notifier_event_cache_push_event (TrackerNotifierEventCache *cache,
 
 	if (event->type < 0 || event_type != TRACKER_NOTIFIER_EVENT_UPDATE)
 		event->type = event_type;
+}
+
+const gchar *
+tracker_notifier_event_cache_get_graph (TrackerNotifierEventCache *cache)
+{
+	return cache->graph ? cache->graph : "";
 }
 
 static void
@@ -310,14 +345,12 @@ compose_uri (const gchar *service,
 }
 
 static gchar *
-get_service_name (TrackerNotifier           *notifier,
-                  TrackerNotifierEventCache *cache)
+get_service_name (TrackerNotifier             *notifier,
+                  TrackerNotifierSubscription *subscription)
 {
-	TrackerNotifierSubscription *subscription;
 	TrackerNotifierPrivate *priv;
 
 	priv = tracker_notifier_get_instance_private (notifier);
-	subscription = cache->subscription;
 
 	if (!subscription)
 		return NULL;
@@ -349,33 +382,47 @@ get_service_name (TrackerNotifier           *notifier,
 static gboolean
 tracker_notifier_emit_events (TrackerNotifierEventCache *cache)
 {
+	TrackerNotifier *notifier;
 	GPtrArray *events;
-	gchar *service;
+
+	notifier = g_weak_ref_get (&cache->notifier);
+	if (!notifier)
+		return G_SOURCE_REMOVE;
 
 	events = tracker_notifier_event_cache_take_events (cache);
 
 	if (events) {
-		service = get_service_name (cache->notifier, cache);
-		g_signal_emit (cache->notifier, signals[EVENTS], 0, service, cache->graph, events);
+		g_signal_emit (notifier, signals[EVENTS], 0,
+		               cache->service, cache->graph, events);
 		g_ptr_array_unref (events);
-		g_free (service);
 	}
+
+	g_object_unref (notifier);
 
 	return G_SOURCE_REMOVE;
 }
 
 static void
-tracker_notifier_emit_events_in_idle (TrackerNotifierEventCache *cache)
+tracker_notifier_emit_events_in_idle (TrackerNotifier           *notifier,
+                                      TrackerNotifierEventCache *cache)
 {
-	g_idle_add_full (G_PRIORITY_DEFAULT,
-	                 (GSourceFunc) tracker_notifier_emit_events,
-	                 cache,
-	                 (GDestroyNotify) _tracker_notifier_event_cache_free);
+	TrackerNotifierPrivate *priv;
+	GSource *source;
+
+	priv = tracker_notifier_get_instance_private (notifier);
+
+	source = g_idle_source_new ();
+	g_source_set_callback (source,
+			       (GSourceFunc) tracker_notifier_emit_events,
+			       cache,
+			       (GDestroyNotify) _tracker_notifier_event_cache_free);
+	g_source_attach (source, priv->main_context);
+	g_source_unref (source);
 }
 
 static gchar *
-create_extra_info_query (TrackerNotifier           *notifier,
-                         TrackerNotifierEventCache *cache)
+create_extra_info_query (TrackerNotifier             *notifier,
+                         TrackerNotifierSubscription *subscription)
 {
 	GString *sparql;
 	gchar *service;
@@ -383,7 +430,7 @@ create_extra_info_query (TrackerNotifier           *notifier,
 
 	sparql = g_string_new ("SELECT ?id ?uri ");
 
-	service = get_service_name (notifier, cache);
+	service = get_service_name (notifier, subscription);
 
 	if (service) {
 		g_string_append_printf (sparql,
@@ -399,13 +446,14 @@ create_extra_info_query (TrackerNotifier           *notifier,
 
 	g_string_append (sparql,
 	                 "  } ."
-	                 "  BIND (tracker:uri(xsd:integer(?id)) AS ?uri)"
+	                 "  BIND (tracker:uri(xsd:integer(?id)) AS ?uri) ."
+	                 "  FILTER (?id > 0) ."
 	                 "} ");
 
 	if (service)
 		g_string_append (sparql, "} ");
 
-	g_string_append (sparql, "ORDER BY ?id");
+	g_string_append (sparql, "ORDER BY xsd:integer(?id)");
 
 	g_free (service);
 
@@ -413,8 +461,8 @@ create_extra_info_query (TrackerNotifier           *notifier,
 }
 
 static TrackerSparqlStatement *
-ensure_extra_info_statement (TrackerNotifier           *notifier,
-                             TrackerNotifierEventCache *cache)
+ensure_extra_info_statement (TrackerNotifier             *notifier,
+                             TrackerNotifierSubscription *subscription)
 {
 	TrackerSparqlStatement **ptr;
 	TrackerNotifierPrivate *priv;
@@ -423,8 +471,8 @@ ensure_extra_info_statement (TrackerNotifier           *notifier,
 
 	priv = tracker_notifier_get_instance_private (notifier);
 
-	if (cache->subscription) {
-		ptr = &cache->subscription->statement;
+	if (subscription) {
+		ptr = &subscription->statement;
 	} else {
 		ptr = &priv->local_statement;
 	}
@@ -433,7 +481,7 @@ ensure_extra_info_statement (TrackerNotifier           *notifier,
 		return *ptr;
 	}
 
-	sparql = create_extra_info_query (notifier, cache);
+	sparql = create_extra_info_query (notifier, subscription);
 	*ptr = tracker_sparql_connection_query_statement (priv->connection,
 	                                                  sparql,
 	                                                  priv->cancellable,
@@ -457,8 +505,8 @@ handle_cursor (GTask        *task,
 {
 	TrackerNotifierEventCache *cache = task_data;
 	TrackerSparqlCursor *cursor = source_object;
-	TrackerNotifier *notifier = cache->notifier;
-	TrackerNotifierPrivate *priv = tracker_notifier_get_instance_private (notifier);
+	TrackerNotifier *notifier;
+	TrackerNotifierPrivate *priv;
 	TrackerNotifierEvent *event;
 	GSequenceIter *iter;
 	gint64 id;
@@ -470,11 +518,8 @@ handle_cursor (GTask        *task,
 	 * extracted from the GSequence, the latter because of the ORDER BY
 	 * clause.
 	 */
-	while (tracker_sparql_cursor_next (cursor, NULL, NULL)) {
+	while (tracker_sparql_cursor_next (cursor, cancellable, NULL)) {
 		id = tracker_sparql_cursor_get_integer (cursor, 0);
-		if (id == 0)
-			continue;
-
 		event = g_sequence_get (iter);
 		iter = g_sequence_iter_next (iter);
 
@@ -488,12 +533,25 @@ handle_cursor (GTask        *task,
 	}
 
 	tracker_sparql_cursor_close (cursor);
+
+	if (g_task_return_error_if_cancelled (task)) {
+		_tracker_notifier_event_cache_free (cache);
+		return;
+	}
+
+	notifier = g_weak_ref_get (&cache->notifier);
+	if (!notifier) {
+		_tracker_notifier_event_cache_free (cache);
+		return;
+	}
+
+	priv = tracker_notifier_get_instance_private (notifier);
 	cache->first = iter;
 
 	if (g_sequence_iter_is_end (cache->first)) {
 		TrackerNotifierEventCache *next;
 
-		tracker_notifier_emit_events_in_idle (cache);
+		tracker_notifier_emit_events_in_idle (notifier, cache);
 
 		g_async_queue_lock (priv->queue);
 		next = g_async_queue_try_pop_unlocked (priv->queue);
@@ -507,6 +565,7 @@ handle_cursor (GTask        *task,
 	}
 
 	g_task_return_boolean (task, TRUE);
+	g_object_unref (notifier);
 }
 
 static void
@@ -536,14 +595,12 @@ query_extra_info_cb (GObject      *object,
 {
 	TrackerNotifierEventCache *cache = user_data;
 	TrackerSparqlStatement *statement;
-	TrackerNotifierPrivate *priv;
 	TrackerSparqlCursor *cursor;
 	GError *error = NULL;
 	GTask *task;
 
 	statement = TRACKER_SPARQL_STATEMENT (object);
 	cursor = tracker_sparql_statement_execute_finish (statement, res, &error);
-	priv = tracker_notifier_get_instance_private (cache->notifier);
 
 	if (!cursor) {
 		if (!g_error_matches (error,
@@ -557,7 +614,7 @@ query_extra_info_cb (GObject      *object,
 		return;
 	}
 
-	task = g_task_new (cursor, priv->cancellable, finish_query, NULL);
+	task = g_task_new (cursor, cache->cancellable, finish_query, NULL);
 	g_task_set_task_data (task, cache, NULL);
 	g_task_run_in_thread (task, handle_cursor);
 	g_object_unref (task);
@@ -600,30 +657,24 @@ tracker_notifier_query_extra_info (TrackerNotifier           *notifier,
                                    TrackerNotifierEventCache *cache)
 {
 	TrackerNotifierPrivate *priv;
-	TrackerSparqlStatement *statement;
 
 	priv = tracker_notifier_get_instance_private (notifier);
 
 	g_mutex_lock (&priv->mutex);
 
-	statement = ensure_extra_info_statement (notifier, cache);
-	if (!statement)
-		goto out;
-
-	bind_arguments (statement, cache);
-	tracker_sparql_statement_execute_async (statement,
-	                                        priv->cancellable,
+	bind_arguments (cache->stmt, cache);
+	tracker_sparql_statement_execute_async (cache->stmt,
+	                                        cache->cancellable,
 	                                        query_extra_info_cb,
 	                                        cache);
 
-out:
 	g_mutex_unlock (&priv->mutex);
 }
 
 void
-_tracker_notifier_event_cache_flush_events (TrackerNotifierEventCache *cache)
+_tracker_notifier_event_cache_flush_events (TrackerNotifier           *notifier,
+                                            TrackerNotifierEventCache *cache)
 {
-	TrackerNotifier *notifier = cache->notifier;
 	TrackerNotifierPrivate *priv = tracker_notifier_get_instance_private (notifier);
 
 	if (g_sequence_is_empty (cache->sequence)) {
@@ -634,7 +685,9 @@ _tracker_notifier_event_cache_flush_events (TrackerNotifierEventCache *cache)
 	cache->first = g_sequence_get_begin_iter (cache->sequence);
 
 	g_async_queue_lock (priv->queue);
-	if (priv->querying) {
+	if (priv->urn_query_disabled) {
+		tracker_notifier_emit_events_in_idle (notifier, cache);
+	} else if (priv->querying) {
 		g_async_queue_push_unlocked (priv->queue, cache);
 	} else {
 		priv->querying = TRUE;
@@ -654,17 +707,22 @@ graph_updated_cb (GDBusConnection *connection,
 {
 	TrackerNotifierSubscription *subscription = user_data;
 	TrackerNotifier *notifier = subscription->notifier;
+	TrackerNotifierPrivate *priv =
+		tracker_notifier_get_instance_private (notifier);
 	TrackerNotifierEventCache *cache;
 	GVariantIter *events;
 	const gchar *graph;
 
-	g_variant_get (parameters, "(sa{ii})", &graph, &events);
+	if (g_cancellable_is_cancelled (priv->cancellable))
+		return;
+
+	g_variant_get (parameters, "(&sa{ii})", &graph, &events);
 
 	cache = _tracker_notifier_event_cache_new_full (notifier, subscription, graph);
 	handle_events (notifier, cache, events);
 	g_variant_iter_free (events);
 
-	_tracker_notifier_event_cache_flush_events (cache);
+	_tracker_notifier_event_cache_flush_events (notifier, cache);
 }
 
 static void
@@ -737,10 +795,10 @@ tracker_notifier_class_init (TrackerNotifierClass *klass)
 
 	/**
 	 * TrackerNotifier::events:
-	 * @self: The #TrackerNotifier
+	 * @self: The `TrackerNotifier`
 	 * @service: The SPARQL service that originated the events, %NULL for the local store
 	 * @graph: The graph where the events happened on, %NULL for the default anonymous graph
-	 * @events: (element-type TrackerNotifierEvent): A #GPtrArray of #TrackerNotifierEvent
+	 * @events: (transfer none) (type GLib.PtrArray) (element-type TrackerNotifierEvent): A [type@GLib.PtrArray] of [struct@Tracker.NotifierEvent]
 	 *
 	 * Notifies of changes in the Tracker database.
 	 */
@@ -781,27 +839,35 @@ tracker_notifier_init (TrackerNotifier *notifier)
 	                                             (GDestroyNotify) tracker_notifier_subscription_free);
 	priv->cancellable = g_cancellable_new ();
 	priv->queue = g_async_queue_new ();
+	priv->main_context = g_main_context_get_thread_default ();
 }
 
 /**
  * tracker_notifier_signal_subscribe:
- * @notifier: a #TrackerNotifier
- * @connection: a #GDBusConnection
- * @service: DBus service name to subscribe to events for
+ * @notifier: A `TrackerNotifier`
+ * @connection: A [class@Gio.DBusConnection]
+ * @service: (nullable): DBus service name to subscribe to events for, or %NULL
  * @object_path: (nullable): DBus object path to subscribe to events for, or %NULL
- * @graph: (nullable): graph to listen events for, or %NULL
+ * @graph: (nullable): Graph to listen events for, or %NULL
  *
- * Listens to notification events from a remote SPARQL endpoint as a DBus
- * service (see #TrackerEndpointDBus). If the @object_path argument is
- * %NULL, the default "/org/freedesktop/Tracker3/Endpoint" path will be
+ * Listens to notification events from a remote DBus SPARQL endpoint.
+ *
+ * If @connection refers to a message bus (system/session), @service must refer
+ * to a D-Bus name (either unique or well-known). If @connection is a non-message
+ * bus (e.g. a peer-to-peer D-Bus connection) the @service argument may be %NULL.
+ *
+ * If the @object_path argument is %NULL, the default
+ * `/org/freedesktop/Tracker3/Endpoint` path will be
  * used. If @graph is %NULL, all graphs will be listened for.
  *
  * The signal subscription can be removed with
- * tracker_notifier_signal_unsubscribe().
+ * [method@Tracker.Notifier.signal_unsubscribe].
+ *
+ * Note that this call is not necessary to receive notifications on
+ * a connection obtained through [ctor@Tracker.SparqlConnection.bus_new],
+ * only to listen to update notifications from additional DBus endpoints.
  *
  * Returns: An ID for this subscription
- *
- * Since: 3.0
  **/
 guint
 tracker_notifier_signal_subscribe (TrackerNotifier *notifier,
@@ -816,7 +882,9 @@ tracker_notifier_signal_subscribe (TrackerNotifier *notifier,
 
 	g_return_val_if_fail (TRACKER_IS_NOTIFIER (notifier), 0);
 	g_return_val_if_fail (G_IS_DBUS_CONNECTION (connection), 0);
-	g_return_val_if_fail (service != NULL, 0);
+	g_return_val_if_fail ((service == NULL &&
+	                       (g_dbus_connection_get_flags (connection) & G_DBUS_CONNECTION_FLAGS_MESSAGE_BUS_CONNECTION) == 0) ||
+	                      (service != NULL && g_dbus_is_name (service)), 0);
 
 	priv = tracker_notifier_get_instance_private (notifier);
 
@@ -866,13 +934,12 @@ tracker_notifier_signal_subscribe (TrackerNotifier *notifier,
 
 /**
  * tracker_notifier_signal_unsubscribe:
- * @notifier: a #TrackerNotifier
- * @handler_id: a handler ID obtained with tracker_notifier_signal_subscribe()
+ * @notifier: A `TrackerNotifier`
+ * @handler_id: A signal subscription handler ID
  *
- * Undoes a DBus signal subscription, the @handler_id argument was previously
- * obtained with a tracker_notifier_signal_subscribe() call.
+ * Undoes a signal subscription done through [method@Tracker.Notifier.signal_subscribe].
  *
- * Since: 3.0
+ * The @handler_id argument was previously obtained during signal subscription creation.
  **/
 void
 tracker_notifier_signal_unsubscribe (TrackerNotifier *notifier,
@@ -900,7 +967,7 @@ _tracker_notifier_get_connection (TrackerNotifier *notifier)
 
 /**
  * tracker_notifier_event_get_event_type:
- * @event: A #TrackerNotifierEvent
+ * @event: A `TrackerNotifierEvent`
  *
  * Returns the event type.
  *
@@ -915,7 +982,7 @@ tracker_notifier_event_get_event_type (TrackerNotifierEvent *event)
 
 /**
  * tracker_notifier_event_get_id:
- * @event: A #TrackerNotifierEvent
+ * @event: A `TrackerNotifierEvent`
  *
  * Returns the tracker:id of the element being notified upon. This is a #gint64
  * which is used as efficient internal identifier for the resource.
@@ -931,13 +998,13 @@ tracker_notifier_event_get_id (TrackerNotifierEvent *event)
 
 /**
  * tracker_notifier_event_get_urn:
- * @event: A #TrackerNotifierEvent
+ * @event: A `TrackerNotifierEvent`
  *
  * Returns the Uniform Resource Name of the element. This is Tracker's
  * public identifier for the resource.
  *
  * This URN is an unique string identifier for the resource being
- * notified upon, typically of the form "urn:uuid:...".
+ * notified upon, typically of the form `urn:uuid:...`.
  *
  * Returns: The element URN
  **/
@@ -946,4 +1013,13 @@ tracker_notifier_event_get_urn (TrackerNotifierEvent *event)
 {
 	g_return_val_if_fail (event != NULL, NULL);
 	return event->urn;
+}
+
+void
+tracker_notifier_disable_urn_query (TrackerNotifier *notifier)
+{
+	TrackerNotifierPrivate *priv;
+
+	priv = tracker_notifier_get_instance_private (notifier);
+	priv->urn_query_disabled = TRUE;
 }
