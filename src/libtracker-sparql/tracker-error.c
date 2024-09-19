@@ -19,7 +19,8 @@
  */
 
 #include "tracker-error.h"
-#include <libtracker-data/tracker-data.h>
+
+#include <libtracker-sparql/core/tracker-data.h>
 
 static const GDBusErrorEntry tracker_sparql_error_entries[] =
 {
@@ -35,6 +36,9 @@ static const GDBusErrorEntry tracker_sparql_error_entries[] =
 	{TRACKER_SPARQL_ERROR_UNKNOWN_GRAPH, "org.freedesktop.Tracker.Error.UnknownGraph"},
 	{TRACKER_SPARQL_ERROR_UNKNOWN_PROPERTY, "org.freedesktop.Tracker.Error.UnknownProperty"},
 	{TRACKER_SPARQL_ERROR_UNSUPPORTED, "org.freedesktop.Tracker.Error.Unsupported"},
+	{TRACKER_SPARQL_ERROR_MISSING_LAST_MODIFIED_HEADER, "org.freedesktop.Tracker.Error.MissingLastModifiedHeader"},
+	{TRACKER_SPARQL_ERROR_INCOMPLETE_PROPERTY_DEFINITION, "org.freedesktop.Tracker.Error.IncompleteProperty"},
+	{TRACKER_SPARQL_ERROR_CORRUPT, "org.freedesktop.Tracker.Error.Corrupt"},
 };
 
 G_STATIC_ASSERT (G_N_ELEMENTS (tracker_sparql_error_entries) == TRACKER_SPARQL_N_ERRORS);
@@ -42,15 +46,16 @@ G_STATIC_ASSERT (G_N_ELEMENTS (tracker_sparql_error_entries) == TRACKER_SPARQL_N
 GQuark
 tracker_sparql_error_quark (void)
 {
-       static volatile gsize quark_volatile = 0;
-       g_dbus_error_register_error_domain ("tracker-sparql-error-quark",
-                                           &quark_volatile,
-                                           tracker_sparql_error_entries,
-                                           G_N_ELEMENTS (tracker_sparql_error_entries));
-       return (GQuark) quark_volatile;
+	static gsize quark = 0;
+
+	g_dbus_error_register_error_domain ("tracker-sparql-error-quark",
+	                                    &quark,
+	                                    tracker_sparql_error_entries,
+	                                    G_N_ELEMENTS (tracker_sparql_error_entries));
+	return (GQuark) quark;
 }
 
-/* Converts internal error codes from libtracker-data into public
+/* Converts internal error codes into public
  * TrackerSparqlError codes. */
 GError *
 _translate_internal_error (GError *error)
@@ -86,6 +91,7 @@ _translate_internal_error (GError *error)
 			 * anywhere, so it doesn't get its own public error code. */
 			case TRACKER_DB_INTERRUPTED: new_code = TRACKER_SPARQL_ERROR_INTERNAL; break;
 			case TRACKER_DB_CONSTRAINT: new_code = TRACKER_SPARQL_ERROR_CONSTRAINT; break;
+			case TRACKER_DB_CORRUPT: new_code = TRACKER_SPARQL_ERROR_CORRUPT; break;
 			default: g_warn_if_reached ();
 		}
 

@@ -1,13 +1,381 @@
-NEW in 3.1.2 - 2021-06-11
+NEW in 3.7.3 - 2024-05-02
 =========================
+  * Bump database version to fix SQLite 3.45.3 issues in existing
+    installs
+  * Fixed possible infinite loop on incomplete/unterminated Turtle/Trig
+    data.
+
+NEW in 3.7.2 - 2024-04-24
+=========================
+  * Fix runtime issue introduced by SQLite 3.45.3
+  * Fix possible inconsistency in the handling of DELETE WHERE queries.
+
+Translations: ca, fur, kab, pt_BR
+
+NEW in 3.7.1 - 2024-03-27
+=========================
+  * Fix possible stalls in D-Bus endpoint batch updates
+  * Better API documentation around handling of corrupted
+    databases
+  * Test improvements
+
+NEW in 3.7.0 - 2024-03-16
+=========================
+  * Handle POST requests in HTTP endpoints
+  * Fix a number of Coverity and static scan reports
+  * Drop deprecated SQLite API
+  * Test improvements
+
+Translations: da, de, fr, it, lv
+
+  Highlighted changes since 3.6.0:
+  * New TrackerEndpoint access control API
+  * New API to map language tagged strings to rdf:langString
+  * Better handling of corrupted databases
+  * Many HTTP endpoint improvements
+  * Better performance
+  * Improved test coverage
+
+NEW in 3.7.rc - 2024-03-04
+==========================
+  * Improve database integrity checks so they don't necessarily
+    happen after unclean exit, and so there are greater guarantees to
+    repair the damage.
+  * Handle HTTPS in SERVICE syntax
+  * Fixes for 32-bit platforms
+  * Fixes to bash completion
+
+Translations: cs, en_GB, es, eu, fa, gl, he, hu, id, ka, ko, lt,
+  lv, nl, pl, ru, sl, sv, tr, zh_CN
+
+NEW in 3.7.beta - 2024-02-12
+============================
+  * Add Avahi support to the TrackerEndpointHttp API object. This only
+    announces endpoints explicitly exposed (i.e. via code) through an HTTP
+    port and does not happen out of the box. The only currently existing
+    user of this API is the `tracker3 endpoint --http-port` CLI subcommand.
+  * There is now an --arg argument in `tracker3 sparql` subcommand
+    to assign values to parameters in queries.
+  * CLI subcommands are now split into their own executables
+  * Improvements in SPARQL handling
+  * Code cleanups and refactors
+  * Build/CI improvements
+
+Translations: uk
+
+NEW in 3.7.alpha - 2024-01-08
+=============================
+  * New TrackerEndpoint access control API
+  * New API to map language tagged strings to rdf:langString
+  * Embed Nepomuk ontology as a GResource
+  * Allow using TrackerEndpoint on private D-Bus connections
+  * Cache SPARQL statements in D-Bus endpoints
+  * Reduce heap memory usage in large transactions over D-Bus
+    endpoints
+  * Make internals future proof wrt handling of string literals
+    in SQLite
+  * Threading improvements for direct connection SELECT queries
+  * Performance improvements
+  * CI, build and test improvements
+
+Translations: el, eo, fa, ka
+
+NEW in 3.6.0 - 2023-09-16
+=========================
+Translations: eo
+
+  Highlighted changes since 3.5.0:
+  - Use BM25 as ranking algorithm
+  - Better and more cohesive documentation
+  - Add tracker_batch_add_rdf() API call to insert RDF data
+    as part of an update batch.
+
+NEW in 3.6.rc - 2023-09-05
+==========================
+  * Documentation updates
+
+Translations: fa, tr
+
+NEW in 3.6.beta - 2023-08-11
+============================
+  * Use BM25 as FTS ranking algorithm
+  * Add tracker_batch_add_rdf() call to add RDF as
+    a batch operation.
+  * Fix warnings with newer glib
+  * Adapt tests to SQLite >= 3.42
+  * Build improvements
+
+Translations: ro
+
+NEW in 3.6.alpha - 2023-07-04
+=============================
+  * Improved threading guarantees of TrackerNotifier signal
+    callbacks.
+  * Add tracker-await-file tool to trackertestutils
+  * A number of build system fixes
+  * Build fixes around strftime() bug workarounds
+    on some architectures/platforms.
+  * Improved compatibility of JSON cursor readers
+  * Leaks plugged
+
+Translations: en_GB, it, pt_BR, sk
+
+NEW in 3.5.2 - 2023-05-12
+=========================
+  * Fix several possible crashers
+  * Fix bashisms in doc generation scripts
+  * Fix ISO8601 date strings in cursors on Darwin
+  * Plug leak
+
+NEW in 3.5.1 - 2023-04-25
+=========================
+  * Reintroduce order/distance independent handling of
+    FTS terms.
+  * Documentation improvements
+  * Do not prune too early content of failed batches for
+    error processing purposes
+
+NEW in 3.5.0 - 2023-03-19
+=========================
+  * Documentation improvements
+  * Dark theme fixes in documentation
+
+Translations: cz, da, fr
+
+  Highlighted changes since 3.4.0:
+  * It is now possible to use TrackerSparqlStatement for SPARQL
+    updates for massive performance improvements.
+  * JSON-LD is now supported as a RDF format
+  * New auto-generated VAPI file. Updates might be necessary.
+  * Reworked documentation, based on gi-docgen
+
+NEW in 3.5.0.rc - 2023-03-05
+============================
+  * Reworked documentation, based on gi-docgen
+  * Make unicode library runtime loadable as a module
+  * Memory leak fixes
+
+Translations: bg, de, es, eu, hu, ko, pl, sl, sr, sv, tr
+
+NEW in 3.5.0.beta - 2023-02-15
+==============================
+  * VAPI generation fixes
+  * Fixes for possible FTS index corruptions
+  * Fixes for tracker_sparql_connection_load_statement_from_gresource
+    with UPDATE statements
+  * Refurbished and modernized functional tests
+  * Documentation improvements
+  * Increased test coverage
+
+Translations: be, el, gl, he, id, lt, pt, ru, tr, uk
+
+NEW in 3.5.0.alpha - 2023-01-11
+===============================
+  * New auto-generated VAPI file. This file is not compatible
+    with the previous VAPI, updates may be necessary.
+  * TrackerSparqlStatement may now be used with SPARQL updates
+  * JSON-LD is now supported as a RDF format
+  * Improved gobject-introspection annotations
+  * Improved generic handling of RDF data types
+  * Build GVDB as a meson subproject
+  * Performance improvements
+  * Fix some printf format strings
+  * Build fixes
+
+NEW in 3.4.2 - 2022-12-05
+=========================
+  * Warn if IRIs are not absolute. This will turn into a query
+    error in future releases.
+  * Handle slight type affinity changes in SQLite 3.40.0 in some
+    operations that broke Tracker expectations.
+  * Close file descriptors asynchronously in TrackerEndpointDBus
+
+Translations: ab, nl
+
+NEW in 3.4.1 - 2022-10-26
+=========================
+  * Fixes to VAPI file
+  * Fixes to IRI escaping checks in TrackerResource
+  * Move fts: prefix definition to base ontology
+  * Improve memory usage of already executed TrackerBatch objects
+    for GC languages
+  * Replace deprecated egrep tool usage in bash completion script
+  * Fixes for memory leaks and invalid memory access
+  * Fix endpoint-side cancellation of client-side D-Bus cancelled
+    queries
+
+Translations: ab, bg, hr, sk, tr
+
+NEW in 3.4.0 - 2022-09-17
+=========================
+Translations: fr
+
+  Highlighted changes since 3.3.0:
+  * Added tracker_sparql_connection_deserialize_async() API
+    to deserialize RDF content.
+  * Library is no built monolithically, Vala dependency is removed
+  * Improved performance of database updates
+
+NEW in 3.4.0.rc - 2022-09-05
+============================
+  * Big performance improvements to inserts, updates and deletes
+  * Escape IRIs in TrackerResource as per IRIREF definition
+  * Update minimum meson version to 0.53
+  * Specify better ICU dependency in internal static library
+  * Plug a small memory leak
+  * Add missing include
+  * Fix/silence build time warnings
+
+Translations: ab, ca, cs, da, de, gl, hr, hu, ko, lt, lv, pl, pt_BR, sl
+
+NEW in 3.4.0.beta - 2022-08-08
+==============================
+  * Fix issues with URI expansion inserting TrackerResource data
+  * Rewrite bus connection to use C and stream-based cursors, vala
+    dependency is no longer necessary.
+  * Fix handling of nrl:InverseFunctionalProperty during database
+    updates.
+
+Translations: ab, es, eu, fur, he, sr, tr, zh_CN
+
+NEW in 3.4.0.alpha - 2022-07-13
+===============================
+  * Add tracker_sparql_connection_deserialize() API to
+    load RDF data.
+  * Add tracker_resource_print_rdf() to print RDF data.
+  * Implement TrackerNamespaceManager for remote connections
+  * SPARQL compliance fixes
+  * Ensure blank node ROWIDs are integer types
+  * Fixes for MacOS
+  * Reimplement libsoup 1/3 support to rely on minimal loadable modules
+  * Build libtracker-sparql as a monolithic library
+  * Fix handling of partial FTS deletions
+  * Fix handling of nrl:modified sequences
+  * Avoid redundant URN queries in TrackerNotifier for D-Bus
+    endpoints.
+  * Documentation improvements
+
+Translations: id, ka, pt, sv, ru, uk
+
+NEW in 3.3.0 - 2022-03-19
+=========================
+  * Fix storage of subsecond information in date/time properties
+  * Add more tests
+
+NEW in 3.3.0.rc - 2022-03-06
+============================
+  * Fix cursor column names for date and resource types
+  * Fix possible crasher
+  * Added non-installable benchmark utility
+  * Added build option to pick libsoup versions to build support
+    for
+  * Added build option to disable tests
+  * Fixed generation of man pages with newer asciidoc
+
+NEW in 3.3.0.beta - 2022-02-14
+==============================
+  * Add API to serialize data into various RDF formats
+  * Add API to map a TrackerSparqlConnection as a SERVICE
+    of another TrackerSparqlConnection
+  * Fixed possible warnings and missed notifications in
+    TrackerNotifier
+  * Updated "tracker3 export" to use serialization API
+  * Documentation fixes
+  * Added internal TrackerRowid type to represent ROWIDs
+
+NEW in 3.3.0.alpha - 2022-01-09
+===============================
+  * Add more specific error codes for problems found updating
+    a database to new ontology changes.
+  * Add method to create a TrackerStatement from a GResource file
+  * Fix 0-len matches in ? and * property path operators
+  * Handle query cancellation in TrackerEndpointDBus
+  * Consistency fixes to TrackerSparqlStatement API in all
+    connection types
+  * Deprecate tracker_namespace_manager_get_default(), use
+    tracker_sparql_connection_get_namespace_manager() instead
+  * Fix rare crash when concurrently querying the database while
+    a graph is being created/deleted.
+  * Add TRACKER_SPARQL_CONNECTION_ANONYMOUS_BNODES flag to
+    optionally enable a treatment of blank nodes that is
+    compliant with the SPARQL 1.1 specs.
+  * Documentation improvements
+  * Fix spurious locking errors with in-memory databases
+  * Fixes to CLI tools detection on NixOS
+
+Translations: fur, id
+
+NEW in 3.2.1 - 2021-10-30
+=========================
+  * Better, more understandable errors when parsing the ontology
+  * Compare doubles with an epsilon in tests
+  * Fixes for issues spotted by Coverity
+
+Translations: he, lv
+
+NEW in 3.2.0 - 2021-09-18
+=========================
+  * Fuller docs, with updated examples
+
+  Highlighted changes since 3.1:
+  * Improved developer experience when designing ontologies,
+    better handling of inconsistent ontologies, and more
+    accurate error reporting.
+  * Added new GDateTime helper API to resources, cursors
+    and statements.
+  * Several fixes to build and run on MacOS, with a brew
+    recipe now available.
+  * Added support for libsoup 3.x.
+  * Fresher and more complete documentation, built with hotdoc.
+  * Many other code fixes and performance improvements.
+
+Translations: da
+
+NEW in 3.2.0.rc - 2021-09-05
+============================
+  * Dropped bogus files from pre-generated documentation
+
+NEW in 3.2.0.beta - 2021-09-01
+==============================
+  * Improved error reporting when parsing ontologies
+  * Improvements to database rollback on ontology errors
+  * Ontology parsing crash fixes
+  * Make soup 2.x/3.x chosen at runtime
+  * Disable GVFS in functional tests
+  * Check accessible graphs when looking up resource URIs/IDs
+  * Port documentation to hotdoc
+  * Avoid "UPDATE ... FROM ..." SQL syntax only present in
+    recent SQLite versions.
+  * Multiple build, ci, website and maintenance improvements
+
+Translations: fi, ru, sk
+
+NEW in 3.2.0.alpha.1 - 2021-06-12
+=================================
+  * Brown paper bag release
+
+NEW in 3.2.0-alpha - 2021-06-11
+===============================
+  * Add support for libsoup 3.x
   * Add missing autocleanup functions
   * Support empty array updates
   * VAPI fixes
   * Add missing G_BEGIN_DECLS/G_END_DECLS guards
+  * Build fixes for macOS
+  * Code cleanups
   * Manpage fixes
+  * CI & unit test improvements
+  * Documentation fixes and updates
   * Fix crash in "tracker3 export --2to3" subcommand
+  * Handle arbitrary order of SERVICE and regular graph
+    patterns
+  * Added new GDateTime helper API to resources, cursors
+    and statements
+  * Implement missing TrackerSparqlConnection methods in
+    bus connections
+  * Many code cleanups and improvements
   * Fix rare bug that lead to triples being silently eaten
-  * Improvements to datetime handling
+  * Improvements to datetime comparisons
 
 Translations: el, ne, oc, zh_TW
 

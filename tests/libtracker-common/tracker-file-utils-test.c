@@ -28,7 +28,6 @@
 #include <gio/gio.h>
 
 #include <libtracker-common/tracker-file-utils.h>
-#include <libtracker-common/tracker-locale.h>
 
 #include <tracker-test-helpers.h>
 
@@ -38,8 +37,11 @@
 static void
 ensure_file_exists (const gchar *filename)
 {
+	gboolean retval;
+
         if (!g_file_test (filename, G_FILE_TEST_EXISTS)) {
-                g_file_set_contents (filename, "Just some stuff", -1, NULL);
+	        retval = g_file_set_contents (filename, "Just some stuff", -1, NULL);
+	        g_assert_true (retval);
         }
 }
 
@@ -71,8 +73,8 @@ static void
 test_file_system_has_enough_space ()
 {
         /* Hopefully we will always have 1 byte free... */
-        g_assert_true (tracker_file_system_has_enough_space ("/home", 1, FALSE));
-        g_assert_true (tracker_file_system_has_enough_space ("/home", 1, TRUE));
+        g_assert_true (tracker_file_system_has_enough_space ("/tmp", 1, FALSE));
+        g_assert_true (tracker_file_system_has_enough_space ("/tmp", 1, TRUE));
 
         /* gulong goes only up to 4Gb. Cannot ask for unreasonable amount of space */
         //g_assert_true (!tracker_file_system_has_enough_space ("/home", G_MAXULONG, FALSE));

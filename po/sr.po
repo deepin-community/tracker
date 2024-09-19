@@ -8,8 +8,8 @@ msgid ""
 msgstr ""
 "Project-Id-Version: tracker master\n"
 "Report-Msgid-Bugs-To: https://gitlab.gnome.org/GNOME/tracker/issues\n"
-"POT-Creation-Date: 2021-01-23 12:32+0000\n"
-"PO-Revision-Date: 2021-02-15 09:12+0100\n"
+"POT-Creation-Date: 2023-02-15 12:30+0000\n"
+"PO-Revision-Date: 2023-02-16 10:50+0100\n"
 "Last-Translator: Марко М. Костић <marko.m.kostic@gmail.com>\n"
 "Language-Team: српски <gnome-sr@googlegroups.org>\n"
 "Language: sr\n"
@@ -19,7 +19,7 @@ msgstr ""
 "Plural-Forms: nplurals=4; plural=n==1? 3 : n%10==1 && n%100!=11 ? 0 : n"
 "%10>=2 && n%10<=4 && (n%100<10 || n%100>=20) ? 1 : 2;\n"
 "X-Project-Style: gnome\n"
-"X-Generator: Poedit 2.4.2\n"
+"X-Generator: Poedit 3.1.1\n"
 
 #. Translators: this is a '|' (U+007C) separated list of common
 #. * title beginnings. Meant to be skipped for sorting purposes,
@@ -27,7 +27,7 @@ msgstr ""
 #. * advised to leave the untranslated articles in addition to
 #. * the translated ones.
 #.
-#: src/libtracker-data/tracker-collation.c:333
+#: src/libtracker-sparql/core/tracker-collation.c:333
 msgid "the|a|an"
 msgstr "један"
 
@@ -35,14 +35,14 @@ msgstr "један"
 msgid "Version"
 msgstr "Издање"
 
-#: src/portal/tracker-main.c:109 src/tracker/tracker-endpoint.c:387
-#: src/tracker/tracker-export.c:517 src/tracker/tracker-import.c:160
-#: src/tracker/tracker-sparql.c:1557 src/tracker/tracker-sql.c:237
+#: src/portal/tracker-main.c:110 src/tracker/tracker-endpoint.c:387
+#: src/tracker/tracker-export.c:543 src/tracker/tracker-import.c:196
+#: src/tracker/tracker-sparql.c:1566 src/tracker/tracker-sql.c:239
 msgid "Unrecognized options"
 msgstr "Непознате опције"
 
-#: src/tracker/tracker-endpoint.c:50 src/tracker/tracker-export.c:47
-#: src/tracker/tracker-import.c:45 src/tracker/tracker-sparql.c:110
+#: src/tracker/tracker-endpoint.c:50 src/tracker/tracker-export.c:49
+#: src/tracker/tracker-import.c:46 src/tracker/tracker-sparql.c:110
 #: src/tracker/tracker-sql.c:44
 msgid "Location of the database"
 msgstr "Место базе података"
@@ -146,117 +146,133 @@ msgstr ""
 "Нова база података је створена. Користите опцију „--dbus-service“ да делите "
 "ову базу података на сабирници порука."
 
-#: src/tracker/tracker-export.c:48 src/tracker/tracker-import.c:46
-#: src/tracker/tracker-import.c:57 src/tracker/tracker-import.c:58
+#: src/tracker/tracker-export.c:50 src/tracker/tracker-import.c:47
+#: src/tracker/tracker-import.c:62 src/tracker/tracker-import.c:63
 #: src/tracker/tracker-sparql.c:111 src/tracker/tracker-sparql.c:123
 #: src/tracker/tracker-sql.c:45 src/tracker/tracker-sql.c:49
 msgid "FILE"
 msgstr "ДАТОТЕКА"
 
-#: src/tracker/tracker-export.c:51 src/tracker/tracker-import.c:49
+#: src/tracker/tracker-export.c:53 src/tracker/tracker-import.c:50
 #: src/tracker/tracker-sparql.c:114
 msgid "Connects to a DBus service"
 msgstr "Повезује се на услугу Д-сабирнице"
 
-#: src/tracker/tracker-export.c:52 src/tracker/tracker-import.c:50
+#: src/tracker/tracker-export.c:54 src/tracker/tracker-import.c:51
 #: src/tracker/tracker-sparql.c:115
 msgid "DBus service name"
 msgstr "Назив услуге Д-сабирнице"
 
-#: src/tracker/tracker-export.c:55 src/tracker/tracker-import.c:53
+#: src/tracker/tracker-export.c:57
+msgid "Output results format: “turtle”, “trig” or “json-ld”"
+msgstr "Формат излазних резултата: „turtle“, „trig“ или „json-ld“"
+
+#: src/tracker/tracker-export.c:58
+msgid "RDF_FORMAT"
+msgstr "РДФ_ФОРМАТ"
+
+#: src/tracker/tracker-export.c:61 src/tracker/tracker-import.c:54
 #: src/tracker/tracker-sparql.c:118
 msgid "Connects to a remote service"
 msgstr "Повезује се на удаљену услугу"
 
-#: src/tracker/tracker-export.c:56 src/tracker/tracker-import.c:54
+#: src/tracker/tracker-export.c:62 src/tracker/tracker-import.c:55
 #: src/tracker/tracker-sparql.c:119
 msgid "Remote service URI"
 msgstr "Путања удаљене услуге"
 
-#: src/tracker/tracker-export.c:59
+#: src/tracker/tracker-export.c:65
 msgid "Output TriG format which includes named graph information"
 msgstr "Исписује ТриГ формат који обухвата информације именованог графика"
 
-#: src/tracker/tracker-export.c:71 src/tracker/tracker-export.c:72
+#: src/tracker/tracker-export.c:77 src/tracker/tracker-export.c:78
 msgid "IRI"
 msgstr "ИРИ"
 
 #. TRANSLATORS: Those are commandline arguments
-#: src/tracker/tracker-export.c:97 src/tracker/tracker-import.c:83
+#: src/tracker/tracker-export.c:103 src/tracker/tracker-import.c:88
 #: src/tracker/tracker-sparql.c:199
 msgid "Specify one “--database”, “--dbus-service” or “--remote-service” option"
 msgstr ""
 "Наведите једну опцију „--database“, „--dbus-service“ или „--remote-service“"
 
-#: src/tracker/tracker-export.c:308 src/tracker/tracker-import.c:99
-#: src/tracker/tracker-sparql.c:1115
-msgid "Could not establish a connection to Tracker"
-msgstr "Не могу да успоставим везу са Трагачем"
-
-#: src/tracker/tracker-export.c:309 src/tracker/tracker-import.c:100
-#: src/tracker/tracker-sparql.c:1116
+#: src/tracker/tracker-export.c:310 src/tracker/tracker-export.c:331
+#: src/tracker/tracker-import.c:125 src/tracker/tracker-sparql.c:1124
 msgid "No error given"
 msgstr "Није дата грешка"
 
-#: src/tracker/tracker-export.c:348 src/tracker/tracker-export.c:399
-#: src/tracker/tracker-export.c:412 src/tracker/tracker-export.c:422
-#: src/tracker/tracker-sparql.c:1493 src/tracker/tracker-sql.c:135
-#: src/tracker/tracker-sql.c:168
+#: src/tracker/tracker-export.c:330 src/tracker/tracker-import.c:124
+#: src/tracker/tracker-sparql.c:1123
+msgid "Could not establish a connection to Tracker"
+msgstr "Не могу да успоставим везу са Трагачем"
+
+#: src/tracker/tracker-export.c:373
+#, c-format
+msgid "Unsupported serialization format “%s”\n"
+msgstr "Неподржан формат серијализације „%s“\n"
+
+#: src/tracker/tracker-export.c:425 src/tracker/tracker-export.c:438
+#: src/tracker/tracker-export.c:448 src/tracker/tracker-sparql.c:1502
+#: src/tracker/tracker-sql.c:137 src/tracker/tracker-sql.c:170
 msgid "Could not run query"
 msgstr "Не могу да покренем упит"
 
-#: src/tracker/tracker-help.c:59 src/tracker/tracker-help.c:71
+#: src/tracker/tracker-help.c:60 src/tracker/tracker-help.c:72
 #, c-format
 msgid "failed to exec “%s”: %s"
 msgstr "нисам успео да извршим „%s“: %s"
 
-#: src/tracker/tracker-import.c:117
+#: src/tracker/tracker-import.c:58
+msgid "Read TriG format which includes named graph information"
+msgstr "Чита ТриГ формат који обухвата информације именованог графика"
+
+#: src/tracker/tracker-import.c:103 src/tracker/tracker-import.c:141
 msgid "Could not run import"
 msgstr "Не могу да покренем увоз"
 
-#: src/tracker/tracker-main.c:43
-msgid "See “tracker3 help <command>” to read about a specific subcommand."
-msgstr "Видите „tracker3 help <наредба>“ да прочитате о нарочитој поткоманди."
-
-#: src/tracker/tracker-main.c:92
+#: src/tracker/tracker-main.c:89
 msgid "Get help on how to use Tracker and any of these commands"
 msgstr "Добавља помоћ о коришћењу Трагача и о било којој од ових наредби"
 
-#: src/tracker/tracker-main.c:93
+#: src/tracker/tracker-main.c:90
 msgid "Create a SPARQL endpoint"
 msgstr "Прави СПАРКуЛ крајњу тачку"
 
-#: src/tracker/tracker-main.c:94
+#: src/tracker/tracker-main.c:91
 msgid "Export data from a Tracker database"
 msgstr "Извози податке из базе података Трагача"
 
-#: src/tracker/tracker-main.c:95
+#: src/tracker/tracker-main.c:92
 msgid "Import data into a Tracker database"
 msgstr "Увози податке у базу података Трагача"
 
-#: src/tracker/tracker-main.c:96
+#: src/tracker/tracker-main.c:93
 msgid ""
 "Query and update the index using SPARQL or search, list and tree the ontology"
 msgstr ""
 "Пропитује и освежава попис користећи СПАРКуЛ или претрагу, списак и стабло "
 "онтологије"
 
-#: src/tracker/tracker-main.c:97
+#: src/tracker/tracker-main.c:94
 msgid "Query the database at the lowest level using SQL"
 msgstr "Пропитује базу података на нижем нивоу користећи СКуЛ"
 
-#: src/tracker/tracker-main.c:137
+#: src/tracker/tracker-main.c:134
 #, c-format
 msgid "“%s” is not a tracker3 command. See “tracker3 --help”"
 msgstr "„%s“ није наредба трагача3. Видите „tracker3 --help“"
 
-#: src/tracker/tracker-main.c:172
+#: src/tracker/tracker-main.c:169
 msgid "Available tracker3 commands are:"
 msgstr "Доступне наредбе трагача3 су:"
 
-#: src/tracker/tracker-main.c:210
+#: src/tracker/tracker-main.c:209
 msgid "Additional / third party commands are:"
 msgstr "Додатне и наредбе трећих страна су:"
+
+#: src/tracker/tracker-main.c:224
+msgid "See “tracker3 help <command>” to read about a specific subcommand."
+msgstr "Видите „tracker3 help <наредба>“ да прочитате о нарочитој поткоманди."
 
 #: src/tracker/tracker-sparql.c:122
 msgid "Path to use to run a query or update from file"
@@ -367,139 +383,139 @@ msgstr "Нисам пронашао префиксе називног прост
 msgid "None"
 msgstr "Ништа"
 
-#: src/tracker/tracker-sparql.c:995
+#: src/tracker/tracker-sparql.c:1003
 msgid "Could not create tree: subclass query failed"
 msgstr "Не могу да створим стабло: упит подразреда није успео"
 
-#: src/tracker/tracker-sparql.c:1044
+#: src/tracker/tracker-sparql.c:1052
 msgid "Could not create tree: class properties query failed"
 msgstr "Не могу да створим стабло: упит својстава разреда није успео"
 
-#: src/tracker/tracker-sparql.c:1131
+#: src/tracker/tracker-sparql.c:1139
 msgid "Could not list classes"
 msgstr "Не могу да испишем разреде"
 
-#: src/tracker/tracker-sparql.c:1139
+#: src/tracker/tracker-sparql.c:1147
 msgid "No classes were found"
 msgstr "Нисам пронашао разреде"
 
-#: src/tracker/tracker-sparql.c:1139 src/tracker/tracker-sparql.c:1355
+#: src/tracker/tracker-sparql.c:1147 src/tracker/tracker-sparql.c:1363
 msgid "Classes"
 msgstr "Разреди"
 
-#: src/tracker/tracker-sparql.c:1155
+#: src/tracker/tracker-sparql.c:1163
 msgid "Could not list class prefixes"
 msgstr "Не могу да испишем префиксе разреда"
 
-#: src/tracker/tracker-sparql.c:1163
+#: src/tracker/tracker-sparql.c:1171
 msgid "No class prefixes were found"
 msgstr "Нисам пронашао префиксе разреда"
 
-#: src/tracker/tracker-sparql.c:1163
+#: src/tracker/tracker-sparql.c:1171
 msgid "Prefixes"
 msgstr "Префикси"
 
-#: src/tracker/tracker-sparql.c:1183
+#: src/tracker/tracker-sparql.c:1191
 msgid ""
 "Could not find property for class prefix, e.g. :Resource in “rdfs:Resource”"
 msgstr ""
 "Не могу да пронађем својство за префикс разреда, нпр. :Resource у „rdfs:"
 "Resource“"
 
-#: src/tracker/tracker-sparql.c:1222
+#: src/tracker/tracker-sparql.c:1230
 msgid "Could not list properties"
 msgstr "Не могу да испишем својства"
 
-#: src/tracker/tracker-sparql.c:1230
+#: src/tracker/tracker-sparql.c:1238
 msgid "No properties were found"
 msgstr "Нисам пронашао својства"
 
-#: src/tracker/tracker-sparql.c:1230 src/tracker/tracker-sparql.c:1378
+#: src/tracker/tracker-sparql.c:1238 src/tracker/tracker-sparql.c:1386
 msgid "Properties"
 msgstr "Својства"
 
-#: src/tracker/tracker-sparql.c:1258
+#: src/tracker/tracker-sparql.c:1266
 msgid "Could not find notify classes"
 msgstr "Не могу да пронађем разреде обавештења"
 
-#: src/tracker/tracker-sparql.c:1266
+#: src/tracker/tracker-sparql.c:1274
 msgid "No notifies were found"
 msgstr "Нисам пронашао обавештења"
 
-#: src/tracker/tracker-sparql.c:1266
+#: src/tracker/tracker-sparql.c:1274
 msgid "Notifies"
 msgstr "Обавештења"
 
-#: src/tracker/tracker-sparql.c:1292
+#: src/tracker/tracker-sparql.c:1300
 msgid "Could not find indexed properties"
 msgstr "Не могу да пронађем пописана својства"
 
-#: src/tracker/tracker-sparql.c:1300
+#: src/tracker/tracker-sparql.c:1308
 msgid "No indexes were found"
 msgstr "Нисам пронашао попис"
 
-#: src/tracker/tracker-sparql.c:1300
+#: src/tracker/tracker-sparql.c:1308
 msgid "Indexes"
 msgstr "Пописи"
 
-#: src/tracker/tracker-sparql.c:1316
+#: src/tracker/tracker-sparql.c:1324
 msgid "Could not list named graphs"
 msgstr "Не могу да испишем именоване графике"
 
-#: src/tracker/tracker-sparql.c:1324
+#: src/tracker/tracker-sparql.c:1332
 msgid "No graphs were found"
 msgstr "Нисам пронашао графике"
 
-#: src/tracker/tracker-sparql.c:1324
+#: src/tracker/tracker-sparql.c:1332
 msgid "Named graphs"
 msgstr "Именовани графици"
 
-#: src/tracker/tracker-sparql.c:1347
+#: src/tracker/tracker-sparql.c:1355
 msgid "Could not search classes"
 msgstr "Не могу да претражим разреде"
 
-#: src/tracker/tracker-sparql.c:1355
+#: src/tracker/tracker-sparql.c:1363
 msgid "No classes were found to match search term"
 msgstr "Нисам пронашао разреде који одговарају термину претраге"
 
-#: src/tracker/tracker-sparql.c:1370
+#: src/tracker/tracker-sparql.c:1378
 msgid "Could not search properties"
 msgstr "Не могу да претражим својства"
 
-#: src/tracker/tracker-sparql.c:1378
+#: src/tracker/tracker-sparql.c:1386
 msgid "No properties were found to match search term"
 msgstr "Нисам пронашао својства која одговарају термину претраге"
 
-#: src/tracker/tracker-sparql.c:1414 src/tracker/tracker-sql.c:70
+#: src/tracker/tracker-sparql.c:1423 src/tracker/tracker-sql.c:70
 msgid "Could not get UTF-8 path from path"
 msgstr "Не могу да добавим УТФ-8 путању за путању"
 
-#: src/tracker/tracker-sparql.c:1426 src/tracker/tracker-sql.c:81
+#: src/tracker/tracker-sparql.c:1435 src/tracker/tracker-sql.c:81
 msgid "Could not read file"
 msgstr "Не могу да прочитам датотеку"
 
-#: src/tracker/tracker-sparql.c:1445
+#: src/tracker/tracker-sparql.c:1454
 msgid "Could not run update"
 msgstr "Не могу да покренем ажурирање"
 
-#: src/tracker/tracker-sparql.c:1452
+#: src/tracker/tracker-sparql.c:1461
 msgid "Done"
 msgstr "Обављено"
 
-#: src/tracker/tracker-sparql.c:1506 src/tracker/tracker-sparql.c:1509
+#: src/tracker/tracker-sparql.c:1515 src/tracker/tracker-sparql.c:1518
 msgid "No results found matching your query"
 msgstr "Нисам пронашао ниједан резултат који одговара вашем упиту"
 
-#: src/tracker/tracker-sparql.c:1506 src/tracker/tracker-sparql.c:1509
-#: src/tracker/tracker-sql.c:142
+#: src/tracker/tracker-sparql.c:1515 src/tracker/tracker-sparql.c:1518
+#: src/tracker/tracker-sql.c:144
 msgid "Results"
 msgstr "Резултати"
 
-#: src/tracker/tracker-sparql.c:1566 src/tracker/tracker-sql.c:248
+#: src/tracker/tracker-sparql.c:1575 src/tracker/tracker-sql.c:250
 msgid "File and query can not be used together"
 msgstr "Датотека и упит не могу бити коришћени заједно"
 
-#: src/tracker/tracker-sparql.c:1568
+#: src/tracker/tracker-sparql.c:1577
 msgid ""
 "The --list-properties argument can only be empty when used with the --tree "
 "argument"
@@ -523,11 +539,11 @@ msgstr "СКуЛ"
 msgid "Failed to initialize data manager"
 msgstr "Нисам успео да покренем управника података"
 
-#: src/tracker/tracker-sql.c:176
+#: src/tracker/tracker-sql.c:178
 msgid "Empty result set"
 msgstr "Празан скуп резлтата"
 
-#: src/tracker/tracker-sql.c:246
+#: src/tracker/tracker-sql.c:248
 msgid "A database path must be specified"
 msgstr "Путања базе података мора бити наведена"
 
@@ -1039,12 +1055,6 @@ msgstr "Путања базе података мора бити наведен�
 
 #~ msgid "Could not create D-Bus proxy to tracker-store"
 #~ msgstr "Не могу да направим посредника Д-сабирнице до трагачевог складишта"
-
-#~ msgid "Output results format: “sparql”, “turtle” or “json-ld”"
-#~ msgstr "Формат излазних резултата: „sparql“, „turtle“ или „json-ld“"
-
-#~ msgid "FORMAT"
-#~ msgstr "ФОРМАТ"
 
 #~ msgid "Could not run tracker-extract: "
 #~ msgstr "Не могу да покренем трагачево распакивање: "
@@ -2006,9 +2016,6 @@ msgstr "Путања базе података мора бити наведен�
 
 #~ msgid "MODULE"
 #~ msgstr "МОДУЛ"
-
-#~ msgid "Unsupported serialization format “%s”\n"
-#~ msgstr "Неподржан формат серијализације „%s“\n"
 
 #~ msgid "— Extract file meta data"
 #~ msgstr "— Извлачи метаподатке датотеке"

@@ -30,6 +30,7 @@
 #include <unictype.h>
 #include <unicase.h>
 
+#include "tracker-language.h"
 #include "tracker-parser.h"
 #include "tracker-parser-utils.h"
 
@@ -39,6 +40,9 @@ typedef enum {
 	TRACKER_PARSER_WORD_TYPE_OTHER_UNAC,
 	TRACKER_PARSER_WORD_TYPE_OTHER_NO_UNAC,
 } TrackerParserWordType;
+
+/* If string lenth less than this value, allocating from the stack */
+#define MAX_STACK_STR_SIZE 8192
 
 /* Max possible length of a UTF-8 encoded string (just a safety limit) */
 #define WORD_BUFFER_LENGTH 512
@@ -51,8 +55,6 @@ struct TrackerParser {
 	guint                  max_word_length;
 	gboolean               enable_stemmer;
 	gboolean               enable_unaccent;
-	gboolean               ignore_stop_words;
-	gboolean               ignore_reserved_words;
 	gboolean               ignore_numbers;
 	gboolean               enable_forced_wordbreaks;
 
@@ -84,7 +86,7 @@ get_word_info (TrackerParser         *parser,
 
 	/* Get first character of the word as UCS4 */
 	first_unichar_len = u8_strmbtouc (&first_unichar,
-	                                  &(parser->txt[parser->cursor]));
+	                                  (const guchar *) &(parser->txt[parser->cursor]));
 	if (first_unichar_len <= 0) {
 		/* This should only happen if NIL was passed to u8_strmbtouc,
 		 *  so better just force stop here */
@@ -106,7 +108,7 @@ get_word_info (TrackerParser         *parser,
 		i = parser->cursor + first_unichar_len;
 		while (1) {
 			/* Text bounds reached? */
-			if (i >= parser->txt_size)
+			if (i >= (gsize) parser->txt_size)
 				break;
 			/* Proper unicode word break detected? */
 			if (parser->word_break_flags[i])
@@ -159,7 +161,7 @@ get_word_info (TrackerParser         *parser,
 /* The input word in this method MUST be normalized in NFKD form,
  * and given in UTF-8, where str_length is the byte-length
  * (note: there is no trailing NUL character!) */
-gboolean
+static gboolean
 tracker_parser_unaccent_nfkd_string (gpointer  str,
                                      gsize    *str_length)
 {
@@ -181,7 +183,7 @@ tracker_parser_unaccent_nfkd_string (gpointer  str,
 		gint utf8_len;
 
 		/* Get next character of the word as UCS4 */
-		utf8_len = u8_strmbtouc (&unichar, &word[i]);
+		utf8_len = u8_strmbtouc (&unichar, (const guchar *) &word[i]);
 
 		/* Invalid UTF-8 character or end of original string. */
 		if (utf8_len <= 0) {
@@ -219,8 +221,7 @@ static gchar *
 process_word_utf8 (TrackerParser         *parser,
                    const gchar           *word,
                    gint                   length,
-                   TrackerParserWordType  type,
-                   gboolean              *stop_word)
+                   TrackerParserWordType  type)
 {
 	gchar word_buffer [WORD_BUFFER_LENGTH];
 	gchar *normalized = NULL;
@@ -249,12 +250,12 @@ process_word_utf8 (TrackerParser         *parser,
 		/* Casefold and NFKD normalization in output.
 		 * NOTE: if the output buffer is not big enough, u8_casefold will
 		 * return a newly-allocated buffer. */
-		normalized = u8_casefold ((const uint8_t *)word,
-		                          length,
-		                          uc_locale_language (),
-		                          UNINORM_NFKD,
-		                          word_buffer,
-		                          &new_word_length);
+		normalized = (gchar*) u8_casefold ((const uint8_t *)word,
+		                                   length,
+		                                   uc_locale_language (),
+		                                   UNINORM_NFKD,
+		                                   (guchar *) word_buffer,
+		                                   &new_word_length);
 
 		/* Case folding + Normalization failed, ignore this word */
 		g_return_val_if_fail (normalized != NULL, NULL);
@@ -275,7 +276,7 @@ process_word_utf8 (TrackerParser         *parser,
 
 		normalized = length > WORD_BUFFER_LENGTH ? g_malloc (length + 1) : word_buffer;
 
-		for (i = 0; i < length; i++) {
+		for (i = 0; i < (gsize) length; i++) {
 			normalized[i] = g_ascii_tolower (word[i]);
 		}
 
@@ -298,29 +299,16 @@ process_word_utf8 (TrackerParser         *parser,
 	/* Set output NIL */
 	normalized[new_word_length] = '\0';
 
-	/* Check if stop word */
-	if (parser->ignore_stop_words) {
-		*stop_word = tracker_language_is_stop_word (parser->language,
-		                                            normalized);
-	}
-
 	/* Stemming needed? */
 	if (parser->enable_stemmer) {
-		stemmed = tracker_language_stem_word (parser->language,
-		                                      normalized,
-		                                      new_word_length);
+		tracker_language_stem_word (parser->language,
+		                            normalized,
+		                            &new_word_length,
+		                            new_word_length);
 
 		/* Log after stemming */
 		tracker_parser_message_hex ("   After stemming",
-		                            stemmed, strlen (stemmed));
-	}
-
-	/* If stemmed wanted and succeeded, free previous and return it */
-	if (stemmed) {
-		if (normalized != word_buffer) {
-			g_free (normalized);
-		}
-		return stemmed;
+		                            normalized, new_word_length);
 	}
 
 	/* It may be the case that no stripping and no stemming was needed, and
@@ -332,8 +320,7 @@ process_word_utf8 (TrackerParser         *parser,
 static gboolean
 parser_next (TrackerParser *parser,
              gint          *byte_offset_start,
-             gint          *byte_offset_end,
-             gboolean      *stop_word)
+             gint          *byte_offset_end)
 {
 	gsize word_length = 0;
 	gchar *processed_word = NULL;
@@ -345,7 +332,7 @@ parser_next (TrackerParser *parser,
 
 	/* Loop to look for next valid word */
 	while (!processed_word &&
-	       parser->cursor < parser->txt_size) {
+	       parser->cursor < (gsize) parser->txt_size) {
 		TrackerParserWordType type;
 		gsize truncated_length;
 		gboolean is_allowed;
@@ -374,15 +361,6 @@ parser_next (TrackerParser *parser,
 			continue;
 		}
 
-		/* check if word is reserved and ignore it if so */
-		if (parser->ignore_reserved_words &&
-		    tracker_parser_is_reserved_word_utf8 (&parser->txt[parser->cursor],
-		                                          word_length)) {
-			/* Ignore this word and keep on looping */
-			parser->cursor += word_length;
-			continue;
-		}
-
 		/* compute truncated word length if needed (to avoid extremely
 		 *  long words)*/
 		truncated_length = (word_length < WORD_BUFFER_LENGTH ?
@@ -395,8 +373,7 @@ parser_next (TrackerParser *parser,
 		processed_word = process_word_utf8 (parser,
 		                                    &(parser->txt[parser->cursor]),
 		                                    truncated_length,
-		                                    type,
-		                                    stop_word);
+		                                    type);
 		if (!processed_word) {
 			/* Ignore this word and keep on looping */
 			parser->cursor += word_length;
@@ -424,15 +401,12 @@ parser_next (TrackerParser *parser,
 }
 
 TrackerParser *
-tracker_parser_new (TrackerLanguage *language)
+tracker_parser_new (void)
 {
 	TrackerParser *parser;
 
-	g_return_val_if_fail (TRACKER_IS_LANGUAGE (language), NULL);
-
 	parser = g_new0 (TrackerParser, 1);
-
-	parser->language = g_object_ref (language);
+	parser->language = tracker_language_new (NULL);
 
 	return parser;
 }
@@ -460,8 +434,6 @@ tracker_parser_reset (TrackerParser *parser,
                       guint          max_word_length,
                       gboolean       enable_stemmer,
                       gboolean       enable_unaccent,
-                      gboolean       ignore_stop_words,
-                      gboolean       ignore_reserved_words,
                       gboolean       ignore_numbers)
 {
 	g_return_if_fail (parser != NULL);
@@ -470,8 +442,6 @@ tracker_parser_reset (TrackerParser *parser,
 	parser->max_word_length = max_word_length;
 	parser->enable_stemmer = enable_stemmer;
 	parser->enable_unaccent = enable_unaccent;
-	parser->ignore_stop_words = ignore_stop_words;
-	parser->ignore_reserved_words = ignore_reserved_words;
 	parser->ignore_numbers = ignore_numbers;
 
 	/* Note: We're forcing some unicode characters to behave
@@ -512,7 +482,6 @@ tracker_parser_next (TrackerParser *parser,
                      gint          *position,
                      gint          *byte_offset_start,
                      gint          *byte_offset_end,
-                     gboolean      *stop_word,
                      gint          *word_length)
 {
 	const gchar  *str;
@@ -523,15 +492,11 @@ tracker_parser_next (TrackerParser *parser,
 	g_free (parser->word);
 	parser->word = NULL;
 
-	*stop_word = FALSE;
-
-	if (parser_next (parser, &byte_start, &byte_end, stop_word)) {
+	if (parser_next (parser, &byte_start, &byte_end)) {
 		str = parser->word;
 	}
 
-	if (!*stop_word) {
-		parser->word_position++;
-	}
+	parser->word_position++;
 
 	*word_length = parser->word_length;
 	*position = parser->word_position;
@@ -541,3 +506,106 @@ tracker_parser_next (TrackerParser *parser,
 	return str;
 }
 
+gpointer
+tracker_collation_init (void)
+{
+	/* Nothing to do */
+	return NULL;
+}
+
+void
+tracker_collation_shutdown (gpointer collator)
+{
+	/* Nothing to do */
+}
+
+gint
+tracker_collation_utf8 (gpointer      collator,
+                        gint          len1,
+                        gconstpointer str1,
+                        gint          len2,
+                        gconstpointer str2)
+{
+	gint result;
+	guchar *aux1;
+	guchar *aux2;
+
+	/* Note: str1 and str2 are NOT NUL-terminated */
+	aux1 = (len1 < MAX_STACK_STR_SIZE) ? g_alloca (len1+1) : g_malloc (len1+1);
+	aux2 = (len2 < MAX_STACK_STR_SIZE) ? g_alloca (len2+1) : g_malloc (len2+1);
+
+	memcpy (aux1, str1, len1); aux1[len1] = '\0';
+	memcpy (aux2, str2, len2); aux2[len2] = '\0';
+
+	result = u8_strcoll (aux1, aux2);
+
+	if (len1 >= MAX_STACK_STR_SIZE)
+		g_free (aux1);
+	if (len2 >= MAX_STACK_STR_SIZE)
+		g_free (aux2);
+	return result;
+}
+
+gunichar2 *
+tracker_parser_tolower (const gunichar2 *input,
+			gsize            len,
+			gsize           *len_out)
+{
+	return u16_tolower (input, len / 2, NULL, NULL, NULL, len_out);
+}
+
+gunichar2 *
+tracker_parser_toupper (const gunichar2 *input,
+                        gsize            len,
+                        gsize           *len_out)
+{
+	return u16_toupper (input, len / 2, NULL, NULL, NULL, len_out);
+}
+
+gunichar2 *
+tracker_parser_casefold (const gunichar2 *input,
+			 gsize            len,
+			 gsize           *len_out)
+{
+	return u16_casefold (input, len / 2, NULL, NULL, NULL, len_out);
+}
+
+gunichar2 *
+tracker_parser_normalize (const gunichar2 *input,
+			  GNormalizeMode   mode,
+			  gsize            len,
+			  gsize           *len_out)
+{
+	uninorm_t nf;
+
+	if (mode == G_NORMALIZE_NFC)
+		nf = UNINORM_NFC;
+	else if (mode == G_NORMALIZE_NFD)
+		nf = UNINORM_NFD;
+	else if (mode == G_NORMALIZE_NFKC)
+		nf = UNINORM_NFKC;
+	else if (mode == G_NORMALIZE_NFKD)
+		nf = UNINORM_NFKD;
+	else
+		g_assert_not_reached ();
+
+	return u16_normalize (nf, input, len / 2, NULL, len_out);
+}
+
+gunichar2 *
+tracker_parser_unaccent (const gunichar2 *input,
+			 gsize            len,
+			 gsize           *len_out)
+{
+	gunichar2 *zOutput;
+	gsize written = 0;
+
+	zOutput = u16_normalize (UNINORM_NFKD, input, len, NULL, &written);
+
+	/* Unaccenting is done in place */
+	tracker_parser_unaccent_nfkd_string (zOutput, &written);
+
+	*len_out = written;
+
+	return zOutput;
+}

@@ -36,16 +36,16 @@
 GType
 tracker_uri_get_type (void)
 {
-	static volatile gsize g_define_type_id__volatile = 0;
-	if (g_once_init_enter (&g_define_type_id__volatile)) {
+	static gsize g_define_type_id = 0;
+	if (g_once_init_enter (&g_define_type_id)) {
 		GTypeInfo info = { 0, NULL, NULL, NULL, NULL, NULL, 0, 0, NULL, NULL, };
-		GType g_define_type_id = g_type_register_static (G_TYPE_STRING,
-		                                                 g_intern_static_string ("TrackerUri"),
-		                                                 &info,
-		                                                 0);
-		g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+		GType type = g_type_register_static (G_TYPE_STRING,
+		                                     g_intern_static_string ("TrackerUri"),
+		                                     &info,
+		                                     0);
+		g_once_init_leave (&g_define_type_id, type);
 	}
-	return g_define_type_id__volatile;
+	return g_define_type_id;
 }
 
 static const char *
@@ -153,14 +153,13 @@ find_conversion (const char  *format,
  *     <link linkend="string-precision">string precision pitfalls</link> documented in g_strdup_printf()
  * @args: the list of parameters to insert into the format string
  *
+ * Formats and escapes a string for use as a URI. This function takes a `va_list`.
+ *
  * Similar to the standard C vsprintf() function but safer, since it
  * calculates the maximum space required and allocates memory to hold
  * the result.
  *
- * The result is escaped using g_uri_escape_string().
- *
- * Returns: (transfer full): a newly-allocated string holding the result. The returned string
- * should be freed with g_free() when no longer needed.
+ * Returns: (transfer full): a newly-allocated string holding the result.
  */
 gchar *
 tracker_sparql_escape_uri_vprintf (const gchar *format,
@@ -259,7 +258,7 @@ cleanup:
  *     <link linkend="string-precision">string precision pitfalls</link> documented in g_strdup_printf()
  * @...: the parameters to insert into the format string
  *
- * Calls tracker_sparql_escape_uri_vprintf() with the @... supplied.
+ * Formats and escapes a string for use as a URI. This function takes variadic arguments.
  *
  * Returns: (transfer full): a newly-allocated string holding the result.The returned string
  * should be freed with g_free() when no longer needed.
@@ -281,10 +280,9 @@ tracker_sparql_escape_uri_printf (const gchar *format, ...)
  * tracker_sparql_escape_uri:
  * @uri: a string to be escaped, following the tracker sparql rules
  *
- * Calls tracker_sparql_escape_uri_printf().
+ * Escapes a string for use as a URI.
  *
- * Returns: (transfer full): a newly-allocated string holding the result. The returned string
- * should be freed with g_free() when no longer needed.
+ * Returns: (transfer full): a newly-allocated string holding the result.
  */
 gchar *
 tracker_sparql_escape_uri (const gchar *uri)

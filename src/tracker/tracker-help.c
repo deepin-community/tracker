@@ -43,7 +43,8 @@ setup_man_path (void)
 		g_string_append (new_path, old_path); 
 	}
 
-	g_setenv ("MANPATH", new_path->str, TRUE);
+	if (!g_setenv ("MANPATH", new_path->str, TRUE))
+		g_warning ("Could not set MANPATH");
 
 	g_string_free (new_path, TRUE);
 }
@@ -78,11 +79,11 @@ static char *
 cmd_to_page (const char *cmd)
 {
 	if (!cmd) {
-		return g_strdup (COMMANDNAME);
-	} else if (g_str_has_prefix (cmd, COMMANDNAME "-")) {
+		return g_strdup (MAIN_COMMAND_NAME);
+	} else if (g_str_has_prefix (cmd, MAIN_COMMAND_NAME "-")) {
 		return g_strdup (cmd);
 	} else {
-		return g_strdup_printf (COMMANDNAME "-%s", cmd);
+		return g_strdup_printf (MAIN_COMMAND_NAME "-%s", cmd);
 	}
 }
 
@@ -104,3 +105,10 @@ tracker_help_show_man_page (const char *cmd)
 	return retval;
 }
 
+int
+main (int argc, const char **argv)
+{
+       tracker_help_show_man_page (argv[1]);
+
+       return 0;
+}

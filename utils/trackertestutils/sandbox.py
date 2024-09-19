@@ -32,7 +32,7 @@ import signal
 import subprocess
 
 from . import dbusdaemon
-from . import dconf
+from .dconf import DConfClient, TemporaryDConfProfile
 from . import psutil_mini as psutil
 
 log = logging.getLogger(__name__)
@@ -72,6 +72,8 @@ class TrackerSandbox:
         else:
             self.system_bus = None
 
+        self._dconf_profile = TemporaryDConfProfile()
+
     def get_environment(self):
         env = os.environ
         env.update(self.extra_env)
@@ -92,6 +94,9 @@ class TrackerSandbox:
         xdg_runtime_dir = env.get('XDG_RUNTIME_DIR')
         if xdg_runtime_dir:
             os.makedirs(xdg_runtime_dir, exist_ok=True)
+
+        # Separate DConf configuration from host in all cases.
+        env['DCONF_PROFILE'] = self._dconf_profile.get_path()
 
     def start(self, new_session=False):
         if self.system_bus:
@@ -163,6 +168,11 @@ class TrackerSandbox:
     def get_session_bus_address(self):
         return self.session_bus.get_address()
 
+    def get_dconf_client(self):
+        return DConfClient(
+            self.extra_env, self.get_session_bus_address()
+        )
+
     def set_config(self, schema_config_dict):
         """Set config values in multiple GSettings schemas.
 
@@ -176,7 +186,7 @@ class TrackerSandbox:
 
         """
 
+        dconf_client = self.get_dconf_client()
         for schema_name, contents in schema_config_dict.items():
-            dconfclient = dconf.DConfClient(self)
             for key, value in contents.items():
-                dconfclient.write(schema_name, key, value)
+                dconf_client.write(schema_name, key, value)

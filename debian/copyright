@@ -1,6 +1,8 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: tracker
 Source: https://ftp.gnome.org/pub/GNOME/sources/tracker/
+Files-Excluded: docs/reference/libtracker-sparql/doc
+Comment: Let's build the docs from source
 
 Files: *
 Copyright: 2008-2011 Nokia <ivan.frade@nokia.com>
@@ -24,7 +26,7 @@ Copyright: 2008-2011 Nokia <ivan.frade@nokia.com>
            2016-2020 Red Hat Inc.
 License: LGPL-2.1+
 
-Files: src/gvdb/*
+Files: subprojects/gvdb/*
 Copyright: 2010 Codethink Limited
 License: LGPL-2.0+
 
